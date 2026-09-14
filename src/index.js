@@ -385,7 +385,7 @@ client.on(Events.InteractionCreate, async interaction => {
 /product-add /product-list /product-edit /product-remove /order-list /shop-panel
 
 2. ✅ **管理者承認型認証・認証管理ページ**
-/verify-panel /verify-admin /verify-status
+/verify-panel /verify-admin /verify-status /verify-settings
 
 3. 🎭 **最大5個のロールパネル**
 /role-panel /role-add /role-list /role-remove
@@ -441,6 +441,7 @@ AI生成機能は搭載していません。`
           ['メッセージ送信', me?.permissions?.has(PermissionFlagsBits.SendMessages)?'✅':'❌'],
           ['メンバー管理イベント', 'Developer Portal の SERVER MEMBERS INTENT がON必須'],
           ['認証ロール', g.verificationRoleId?`<@&${g.verificationRoleId}>`:'未設定'],
+          ['認証承認通知先', g.verificationReviewChannelId?`<#${g.verificationReviewChannelId}>`:'未設定'],
           ['入室通知', g.joinLogChannelId?`<#${g.joinLogChannelId}>`:'未設定'],
           ['退出通知', g.leaveLogChannelId?`<#${g.leaveLogChannelId}>`:'未設定'],
           ['天気通知', g.weatherChannelId?`<#${g.weatherChannelId}>`:'未設定'],
@@ -655,7 +656,9 @@ AI生成機能は搭載していません。`
         }
 
         const g=guildData(store,interaction.guildId);
+        const approvalChannel=interaction.options.getChannel('approval_channel',true);
         g.verificationRoleId=role.id;
+        g.verificationReviewChannelId=approvalChannel.id;
         saveStore(store);
 
         return interaction.reply({
@@ -663,7 +666,10 @@ AI生成機能は搭載していません。`
             new EmbedBuilder()
               .setTitle('✅ 認証申請')
               .setDescription('下の **認証を申請する** ボタンを押してください。\n\n管理者が申請内容を確認して承認すると、認証ロールが付与されます。')
-              .addFields({name:'承認後のロール',value:`<@&${role.id}>`})
+              .addFields(
+                {name:'承認後のロール',value:`<@&${role.id}>`},
+                {name:'申請通知先',value:`<#${approvalChannel.id}>`}
+              )
           ],
           components:[
             new ActionRowBuilder().addComponents(
@@ -722,12 +728,23 @@ AI生成機能は搭載していません。`
         });
       }
 
+      if (n === 'verify-settings') {
+        const g=guildData(store,interaction.guildId);
+        const ch=interaction.options.getChannel('approval_channel',true);
+        g.verificationReviewChannelId=ch.id;
+        saveStore(store);
+        return interaction.reply({
+          content:`✅ 認証申請の承認通知先を ${ch} に変更しました。`,
+          ephemeral:true
+        });
+      }
+
       if (n === 'verify-status') {
         const g=guildData(store,interaction.guildId);
         const roleId=g.verificationRoleId;
         const role=roleId ? await interaction.guild.roles.fetch(roleId).catch(()=>null) : null;
         return interaction.reply({
-          content:`🔒 **認証設定**\n認証ロール: ${role?`<@&${role.id}>`:'未設定 / 削除済み'}\nBOTのロール管理権限: ${interaction.guild.members.me?.permissions.has(PermissionFlagsBits.ManageRoles)?'✅':'❌'}`,
+          content:`🔒 **認証設定**\n認証ロール: ${role?`<@&${role.id}>`:'未設定 / 削除済み'}\n承認通知先: ${g.verificationReviewChannelId?`<#${g.verificationReviewChannelId}>`:'未設定'}\nBOTのロール管理権限: ${interaction.guild.members.me?.permissions.has(PermissionFlagsBits.ManageRoles)?'✅':'❌'}`,
           ephemeral:true
         });
       }
@@ -900,7 +917,7 @@ AI生成機能は搭載していません。`
       if (n === 'guild-status') {
         const g=guildData(store,interaction.guildId);
         return interaction.reply({
-          content:`🔒 **サーバー設定**\n参加通知: ${g.joinLogChannelId?`<#${g.joinLogChannelId}>`:'未設定'}\n退出通知: ${g.leaveLogChannelId?`<#${g.leaveLogChannelId}>`:'未設定'}\n天気通知: ${g.weatherChannelId?`<#${g.weatherChannelId}>`:'未設定'}\n地震通知: ${g.earthquakeChannelId?`<#${g.earthquakeChannelId}>`:'未設定'}\n認証ロール: ${g.verificationRoleId?`<@&${g.verificationRoleId}>`:'未設定'}\nチケットカテゴリ: ${g.ticketCategoryId?`<#${g.ticketCategoryId}>`:'未設定'}\nサポートロール: ${g.ticketSupportRoleId?`<@&${g.ticketSupportRoleId}>`:'未設定'}`,
+          content:`🔒 **サーバー設定**\n参加通知: ${g.joinLogChannelId?`<#${g.joinLogChannelId}>`:'未設定'}\n退出通知: ${g.leaveLogChannelId?`<#${g.leaveLogChannelId}>`:'未設定'}\n天気通知: ${g.weatherChannelId?`<#${g.weatherChannelId}>`:'未設定'}\n地震通知: ${g.earthquakeChannelId?`<#${g.earthquakeChannelId}>`:'未設定'}\n認証ロール: ${g.verificationRoleId?`<@&${g.verificationRoleId}>`:'未設定'}\n認証承認通知先: ${g.verificationReviewChannelId?`<#${g.verificationReviewChannelId}>`:'未設定'}\nチケットカテゴリ: ${g.ticketCategoryId?`<#${g.ticketCategoryId}>`:'未設定'}\nサポートロール: ${g.ticketSupportRoleId?`<@&${g.ticketSupportRoleId}>`:'未設定'}`,
           ephemeral:true
         });
       }
@@ -1208,8 +1225,60 @@ ${url}`)],
         };
         saveStore(store);
 
+        const g=guildData(store,interaction.guildId);
+        let notifySent=false;
+        if(g.verificationReviewChannelId){
+          const reviewChannel=interaction.guild.channels.cache.get(g.verificationReviewChannelId)
+            || await interaction.guild.channels.fetch(g.verificationReviewChannelId).catch(()=>null);
+
+          if(reviewChannel?.isTextBased()){
+            const reviewEmbed=new EmbedBuilder()
+              .setTitle(`✅ 認証申請 #${id}`)
+              .setDescription(`<@${interaction.user.id}> から認証申請があります。`)
+              .addFields(
+                {name:'申請者',value:`<@${interaction.user.id}>`},
+                {name:'ユーザーID',value:interaction.user.id},
+                {name:'承認後のロール',value:`<@&${roleId}>`},
+                {name:'申請日時',value:new Date().toLocaleString('ja-JP',{timeZone:'Asia/Tokyo'})}
+              )
+              .setThumbnail(interaction.user.displayAvatarURL())
+              .setTimestamp();
+
+            const reviewRow=new ActionRowBuilder().addComponents(
+              new ButtonBuilder()
+                .setCustomId(`verifyadmin:${id}:approve`)
+                .setLabel('承認する')
+                .setEmoji('✅')
+                .setStyle(ButtonStyle.Success),
+              new ButtonBuilder()
+                .setCustomId(`verifyadmin:${id}:reject`)
+                .setLabel('却下する')
+                .setEmoji('❌')
+                .setStyle(ButtonStyle.Danger)
+            );
+
+            const sent=await reviewChannel.send({
+              content:'🔔 **新しい認証申請があります。**',
+              embeds:[reviewEmbed],
+              components:[reviewRow]
+            }).catch(e=>{
+              console.error('verification review notification error',e);
+              return null;
+            });
+
+            if(sent){
+              store.verificationRequests[id].reviewMessageId=sent.id;
+              store.verificationRequests[id].reviewChannelId=reviewChannel.id;
+              saveStore(store);
+              notifySent=true;
+            }
+          }
+        }
+
         return interaction.reply({
-          content:`✅ 認証申請を送信しました。（申請 #${id}）\n管理者が承認すると **${role.name}** が付与されます。`,
+          content:notifySent
+            ? `✅ 認証申請を送信しました。（申請 #${id}）\n管理者へ通知しました。承認されると **${role.name}** が付与されます。`
+            : `✅ 認証申請を保存しました。（申請 #${id}）\n⚠️ 承認通知チャンネルへの通知に失敗しました。管理者は \`/verify-admin\` から確認できます。`,
           ephemeral:true
         });
       }

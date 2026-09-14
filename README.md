@@ -1,76 +1,59 @@
-# Discord MultiBot v5.2 コマンド受信修正版
+# Discord MultiBot v5.3 認証申請通知版
 
-この版は「BOTは起動しているのに、スラッシュコマンドが全く反応しない」問題を切り分け・修正する版です。
+v5.2の全機能を維持したまま、認証申請フローを更新しました。
 
-## v5.2の重要変更
+## 認証の新しい流れ
 
-`npm run deploy-commands` が `.env` の `DISCORD_CLIENT_ID` をそのまま信用せず、
-**BOTトークン自身のBOT IDをDiscord APIから取得して、そのApplicationへ直接コマンド登録**します。
-
-これにより、古いBOTのApplication IDや別BOTのIDが `.env` に残っていた場合の
-「コマンド名は表示されるが、起動中BOTへInteractionが届かない」状態を防ぎます。
-
-さらに `/ping` を追加しました。
-
-起動後:
+管理者:
 
 ```text
-/ping
+/verify-panel role:@認証済み approval_channel:#認証承認
 ```
 
-を実行してください。
+これで認証パネルを設置します。
 
-正常ならDiscordに「BOTは正常にコマンドを受信しています」と表示され、
-PowerShellには次のようなログが出ます。
+メンバーが「認証を申請する」を押すと、指定した `#認証承認` チャンネルへ自動で通知されます。
+
+通知には次の情報が表示されます。
+
+- 申請番号
+- 申請者
+- DiscordユーザーID
+- 承認後に付与するロール
+- 申請日時
+- 「承認する」ボタン
+- 「却下する」ボタン
+
+管理者が **承認する** を押すと、申請者へ指定ロールを付与します。
+**却下する** を押すとロールは付与しません。
+
+承認・却下結果は申請者へDMでも通知します。DMを閉じている場合でも承認処理自体は行われます。
+
+## 承認通知先だけ変更する
 
 ```text
-📨 Interaction受信: type=2 command=ping user=...
+/verify-settings approval_channel:#新しい認証承認
 ```
 
-PowerShellにこの `Interaction受信` が一切出ない場合、
-Discordで実行しているコマンドが別Application/BOTのコマンドです。
+## 設定確認
 
-## 更新手順
+```text
+/verify-status
+```
+
+認証ロールと承認通知先を確認できます。
+
+従来の `/verify-admin` も残しているため、通知を見失った場合でも承認待ちを管理者ページから確認できます。
+
+## 更新
 
 ```powershell
-cd C:\NoahXJP-site\Discord\discord-multibot-v5.2-command-routing-fixed
+cd C:\NoahXJP-site\Discord\discord-multibot-v5.3-verification-notify
 npm install
 npm run deploy-commands
 npm start
 ```
 
-`deploy-commands` 実行時に次の2つを確認してください。
-
-```text
-🤖 Token BOT: ...
-✅ Global commands registered to <BOT ID>: ...
-```
-
-そのIDと、`npm start` 後の
-
-```text
-🆔 起動中BOT User ID: ...
-```
-
-が同じである必要があります。
-
-## 機能
-
-v5.1までの非AI機能をすべて維持しています。
-
-- 自販機・PayPay・商品・在庫・管理
-- 管理者承認型認証
-- 最大5ロールパネル
-- 入退室通知
-- チケット
-- 自動返信
-- 予約投稿・自動削除
-- モデレーション
-- 47都道府県・地方・全国・複数地域天気
-- 天気とは独立した地震速報
-- VC音楽
-- BOTオーナー
-- `/diagnostics`
-- `/ping`
+`/verify-settings` と `/verify-panel` の引数が更新されているため、`npm run deploy-commands` は必須です。
 
 AI生成機能は搭載していません。

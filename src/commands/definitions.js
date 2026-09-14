@@ -53,10 +53,14 @@ export const commandData = [
 
   new SlashCommandBuilder().setName('verify-panel').setDescription('認証パネルを設置')
     .addRoleOption(o=>o.setName('role').setDescription('認証後に付与するロール').setRequired(true))
+    .addChannelOption(o=>o.setName('approval_channel').setDescription('認証申請の承認通知を送るチャンネル').setRequired(true).addChannelTypes(ChannelType.GuildText))
     .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
   new SlashCommandBuilder().setName('verify-admin').setDescription('【管理者】認証申請を確認・承認')
     .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
   new SlashCommandBuilder().setName('verify-status').setDescription('【管理者】認証パネル設定を確認')
+    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
+  new SlashCommandBuilder().setName('verify-settings').setDescription('【管理者】認証申請の承認通知先を変更')
+    .addChannelOption(o=>o.setName('approval_channel').setDescription('承認通知チャンネル').setRequired(true).addChannelTypes(ChannelType.GuildText))
     .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
   new SlashCommandBuilder().setName('join-leave-settings').setDescription('【管理者】入退室通知チャンネルを設定')
     .addChannelOption(o=>o.setName('join').setDescription('参加通知チャンネル').addChannelTypes(ChannelType.GuildText))
