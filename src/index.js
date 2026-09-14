@@ -1,183 +1,134 @@
-import { Client, GatewayIntentBits, Partials, EmbedBuilder, AttachmentBuilder } from 'discord.js';
-import { config, assertConfig } from './config.js';
-import { db, getSettings, setSetting } from './db/database.js';
-import { requireAdmin, canManageShop, getShop, isBotOwner, isServerAdmin } from './utils/permissions.js';
-import { verifyPanel, ticketPanel, rolePanel, shopPanel, productPurchaseView } from './systems/panels.js';
-import { showPurchaseModal, submitOrder, approveOrder, rejectOrder, cancelOrder } from './systems/shop.js';
-import { createTicket, closeTicket } from './systems/tickets.js';
-import { weather } from './systems/weather.js';
-import { startEarthquakeWatcher } from './systems/earthquake.js';
-import { playAudio, stopAudio } from './systems/music.js';
-import { generateImage } from './systems/images.js';
-import { onJoin, onLeave } from './events/member.js';
 
-assertConfig();
-const client = new Client({
-  intents:[GatewayIntentBits.Guilds,GatewayIntentBits.GuildMembers,GatewayIntentBits.GuildMessages,GatewayIntentBits.MessageContent,GatewayIntentBits.GuildVoiceStates,GatewayIntentBits.DirectMessages],
-  partials:[Partials.Channel]
+import "dotenv/config";
+import {
+ Client, GatewayIntentBits, Events, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle
+} from "discord.js";
+import {joinVoiceChannel, createAudioPlayer, createAudioResource, AudioPlayerStatus} from "@discordjs/voice";
+import {loadStore, saveStore} from "./store.js";
+import {searchRegionChoices} from "./regions.js";
+
+if(!process.env.DISCORD_TOKEN) throw new Error("DISCORD_TOKEN が未設定です");
+
+const client=new Client({intents:[
+ GatewayIntentBits.Guilds,GatewayIntentBits.GuildMembers,GatewayIntentBits.GuildMessages,
+ GatewayIntentBits.MessageContent,GatewayIntentBits.GuildVoiceStates
+]});
+const store=loadStore();
+const players=new Map();
+
+function gs(id){ store.guilds[id] ??= {weatherRegions:[],earthquakeRegions:[],minIntensity:3}; return store.guilds[id]; }
+
+async function geocode(name){
+ const u=new URL("https://geocoding-api.open-meteo.com/v1/search");
+ u.searchParams.set("name",name);u.searchParams.set("count","1");u.searchParams.set("language","ja");u.searchParams.set("format","json");
+ const r=await fetch(u);const j=await r.json();return j.results?.[0]||null;
+}
+async function weatherText(name){
+ const g=await geocode(name); if(!g) return `「${name}」を検索できませんでした。`;
+ const u=new URL("https://api.open-meteo.com/v1/forecast");
+ u.searchParams.set("latitude",g.latitude);u.searchParams.set("longitude",g.longitude);
+ u.searchParams.set("current","temperature_2m,apparent_temperature,precipitation,wind_speed_10m");
+ u.searchParams.set("daily","temperature_2m_max,temperature_2m_min,precipitation_probability_max");
+ u.searchParams.set("timezone","Asia/Tokyo");
+ const r=await fetch(u), j=await r.json();
+ return `📍 ${g.name}${g.admin1?`（${g.admin1}）`:""}\n🌡 現在 ${j.current?.temperature_2m??"-"}℃ / 体感 ${j.current?.apparent_temperature??"-"}℃\n💧 降水 ${j.current?.precipitation??"-"} mm\n💨 風速 ${j.current?.wind_speed_10m??"-"} km/h\n📈 最高 ${j.daily?.temperature_2m_max?.[0]??"-"}℃ / 最低 ${j.daily?.temperature_2m_min?.[0]??"-"}℃\n☔ 降水確率 ${j.daily?.precipitation_probability_max?.[0]??"-"}%`;
+}
+async function latestEq(){
+ const r=await fetch("https://api.p2pquake.net/v2/history?codes=551&limit=1"), j=await r.json(), e=j?.[0]?.earthquake;
+ if(!e) return "地震情報を取得できませんでした。";
+ return `🟠 ${e.time||"時刻不明"}\n震源: ${e.hypocenter?.name||"不明"}\nM${e.hypocenter?.magnitude??"?"} / 深さ ${e.hypocenter?.depth??"?"}km\n最大震度: ${e.maxScale??"不明"}`;
+}
+
+client.once(Events.ClientReady,c=>console.log(`Logged in as ${c.user.tag}`));
+
+client.on(Events.InteractionCreate,async i=>{
+ if(i.isAutocomplete()) return i.respond(searchRegionChoices(i.options.getFocused()));
+
+ if(i.isButton() && i.customId.startsWith("role:")){
+   const roleId=i.customId.slice(5), role=i.guild.roles.cache.get(roleId), m=i.member;
+   if(!role) return i.reply({content:"ロールが見つかりません。",ephemeral:true});
+   try{
+     if(m.roles.cache.has(roleId)){await m.roles.remove(role);return i.reply({content:`「${role.name}」を解除しました。`,ephemeral:true});}
+     await m.roles.add(role);return i.reply({content:`「${role.name}」を付与しました。`,ephemeral:true});
+   }catch{return i.reply({content:"ロール権限またはBOTロール位置を確認してください。",ephemeral:true});}
+ }
+ if(!i.isChatInputCommand()) return;
+
+ const n=i.commandName;
+ if(n==="help") return i.reply({embeds:[new EmbedBuilder().setTitle("Discord MultiBot v3").setDescription(
+   "🌤 /weather /weather-register\n🌍 /earthquake /earthquake-register\n🎭 /role-panel\n🗓 /schedule-post /schedule-list /schedule-cancel\n🛡 /moderation-rule\n🎵 /play /queue /skip /stop\n🎨 /ai-image /ai-video"
+ )]});
+
+ if(n==="weather"){await i.deferReply();return i.editReply(await weatherText(i.options.getString("region",true)));}
+ if(n==="weather-register"){const g=gs(i.guildId),r=i.options.getString("region",true);if(!g.weatherRegions.includes(r))g.weatherRegions.push(r);saveStore(store);return i.reply(`天気通知地域: ${g.weatherRegions.join(" / ")}`);}
+ if(n==="earthquake"){await i.deferReply();return i.editReply(await latestEq());}
+ if(n==="earthquake-register"){const g=gs(i.guildId),r=i.options.getString("region",true),min=i.options.getInteger("min_intensity");if(!g.earthquakeRegions.includes(r))g.earthquakeRegions.push(r);if(min)g.minIntensity=min;saveStore(store);return i.reply(`地震通知地域: ${g.earthquakeRegions.join(" / ")} / 最低震度 ${g.minIntensity}`);}
+ if(n==="role-panel"){
+   const role=i.options.getRole("role",true),label=i.options.getString("label",true),emoji=i.options.getString("emoji");
+   const b=new ButtonBuilder().setCustomId(`role:${role.id}`).setLabel(label).setStyle(ButtonStyle.Primary);if(emoji)b.setEmoji(emoji);
+   return i.reply({embeds:[new EmbedBuilder().setTitle("ロール選択").setDescription("下のボタンで付与・解除できます。")],components:[new ActionRowBuilder().addComponents(b)]});
+ }
+ if(n==="schedule-post"){
+   const ch=i.options.getChannel("channel",true),raw=i.options.getString("datetime",true),msg=i.options.getString("message",true),del=i.options.getInteger("delete_after_minutes");
+   const when=new Date(raw.replace(" ","T")+":00+09:00");if(Number.isNaN(when.getTime()))return i.reply({content:"日時形式: 2026-09-15 20:00",ephemeral:true});
+   const id=store.nextIds.schedule++;store.schedules.push({id,guildId:i.guildId,channelId:ch.id,message:msg,at:when.toISOString(),deleteAfterMinutes:del,done:false});saveStore(store);return i.reply(`予約 #${id} を登録しました。`);
+ }
+ if(n==="schedule-list"){const a=store.schedules.filter(x=>x.guildId===i.guildId&&!x.done);return i.reply(a.length?a.map(x=>`#${x.id} ${x.at} → <#${x.channelId}>`).join("\n"):"予約なし");}
+ if(n==="schedule-cancel"){const id=i.options.getInteger("id",true),len=store.schedules.length;store.schedules=store.schedules.filter(x=>!(x.guildId===i.guildId&&x.id===id));saveStore(store);return i.reply(len!==store.schedules.length?`#${id} 削除完了`:"該当なし");}
+ if(n==="moderation-rule"){const id=store.nextIds.rule++;store.moderationRules.push({id,guildId:i.guildId,keyword:i.options.getString("keyword",true),action:i.options.getString("action",true)});saveStore(store);return i.reply(`ルール #${id} を追加しました。`);}
+ if(n==="play"){
+   const url=i.options.getString("url",true),vc=i.member?.voice?.channel;if(!vc)return i.reply({content:"先にVCへ参加してください。",ephemeral:true});
+   let s=players.get(i.guildId);
+   if(!s){
+     const connection=joinVoiceChannel({channelId:vc.id,guildId:i.guildId,adapterCreator:i.guild.voiceAdapterCreator});
+     const player=createAudioPlayer();connection.subscribe(player);s={connection,player,queue:[],playing:false};
+     player.on(AudioPlayerStatus.Idle,()=>{s.playing=false;playNext(i.guildId).catch(console.error);});players.set(i.guildId,s);
+   }
+   s.queue.push(url);await i.reply(`キュー追加:\n${url}\n※この土台版は直接音声URL向け。YouTube URL抽出再生は未実装です。`);if(!s.playing)playNext(i.guildId).catch(console.error);return;
+ }
+ if(n==="queue"){const s=players.get(i.guildId);return i.reply(s?.queue?.length?s.queue.map((x,k)=>`${k+1}. ${x}`).join("\n"):"キューは空です。");}
+ if(n==="skip"){players.get(i.guildId)?.player.stop(true);return i.reply("スキップしました。");}
+ if(n==="stop"){const s=players.get(i.guildId);if(s){s.queue.length=0;s.player.stop(true);s.connection.destroy();players.delete(i.guildId);}return i.reply("停止しました。");}
+ if(n==="ai-image"||n==="ai-video"){
+   const mode=i.options.getString("quality")||process.env.AI_DEFAULT_MODE||"free";
+   if(mode==="high"&&process.env.AI_PAID_API_ENABLED!=="true")return i.reply({content:"高精度APIは無効です。無料優先モードを使用してください。",ephemeral:true});
+   return i.reply(`生成モード: ${mode}\n内容: ${i.options.getString("prompt",true)}\n※生成エンジン接続口まで実装済み。ローカルAI/API本体は次段階で接続します。`);
+ }
 });
 
-client.once('ready',()=>{ console.log(`✅ ${client.user.tag} 起動 / ${client.guilds.cache.size} servers`); startEarthquakeWatcher(client); });
-client.on('guildMemberAdd',onJoin);
-client.on('guildMemberRemove',onLeave);
-client.on('messageCreate',async m=>{
-  if(m.author.bot||!m.guildId)return;
-  const rows=db.prepare('SELECT * FROM auto_replies WHERE guild_id=?').all(m.guildId);
-  for(const r of rows){
-    const hit=r.mode==='exact'?m.content===r.trigger:m.content.includes(r.trigger);
-    if(hit){await m.reply(r.reply);break;}
-  }
+async function playNext(gid){
+ const s=players.get(gid);if(!s||s.playing||!s.queue.length)return;const url=s.queue.shift();
+ try{s.playing=true;s.player.play(createAudioResource(url));}catch(e){s.playing=false;console.error(e);return playNext(gid);}
+}
+
+client.on(Events.MessageCreate,async msg=>{
+ if(msg.author.bot||!msg.guild)return;
+ for(const r of store.moderationRules.filter(x=>x.guildId===msg.guild.id)){
+   if(!msg.content.toLowerCase().includes(r.keyword.toLowerCase()))continue;
+   try{
+     if(r.action==="delete")await msg.delete();
+     if(r.action==="timeout"&&msg.member?.moderatable)await msg.member.timeout(10*60*1000,`自動モデレーション: ${r.keyword}`);
+     if(r.action==="kick"&&msg.member?.kickable)await msg.member.kick(`自動モデレーション: ${r.keyword}`);
+     if(r.action==="ban"&&msg.member?.bannable)await msg.member.ban({reason:`自動モデレーション: ${r.keyword}`});
+   }catch(e){console.error(e);}
+   break;
+ }
 });
 
-client.on('interactionCreate', async i=>{ try{
-  if(i.isChatInputCommand()){
-    if(!i.guildId && i.commandName!=='help') return i.reply({content:'このコマンドはサーバー内で使用してください。',ephemeral:true});
+setInterval(async()=>{
+ const now=Date.now();let changed=false;
+ for(const s of store.schedules){
+   if(s.done||new Date(s.at).getTime()>now)continue;
+   try{
+     const ch=await client.channels.fetch(s.channelId);
+     if(ch?.isTextBased()){
+       const sent=await ch.send(s.message);
+       if(s.deleteAfterMinutes)setTimeout(()=>sent.delete().catch(()=>{}),s.deleteAfterMinutes*60000);
+     }
+     s.done=true;changed=true;
+   }catch(e){console.error(e);}
+ }
+ if(changed)saveStore(store);
+},15000);
 
-    if(i.commandName==='help') return i.reply({embeds:[new EmbedBuilder().setTitle('🤖 Multi BOT Help').setDescription([
-      '`/shop-create` 自分の自動販売機を作成（誰でも可能）',
-      '`/shop-list` 自販機一覧',
-      '`/shop-panel shop_id:` 自販機を設置',
-      '`/shop-config` 自販機の管理ロール・通知先変更',
-      '`/product-add` 商品追加',
-      '`/product-list` 商品確認',
-      '`/order-list` 注文確認',
-      '',
-      '`/verify-panel` 認証 / `/role-panel` ロール / `/ticket-panel` チケット',
-      '`/weather` 天気 / `/image` AI画像 / `/play` 音声 / `/stop` 停止',
-      '',
-      'BOTオーナーは全サーバー・全自販機を管理できます。'
-    ].join('\n'))],ephemeral:true});
-
-    if(i.commandName==='weather'){await i.deferReply();return i.editReply({embeds:[await weather(i.options.getString('place'))]});}
-    if(i.commandName==='image'){await i.deferReply();const out=await generateImage(i.options.getString('prompt'));return Buffer.isBuffer(out)?i.editReply({files:[new AttachmentBuilder(out,{name:'generated.png'})]}):i.editReply(out);}
-    if(i.commandName==='play'){await i.deferReply();await playAudio(i,i.options.getString('url'));return i.editReply('▶️ 再生を開始しました。');}
-    if(i.commandName==='stop'){stopAudio(i.guildId);return i.reply('⏹️ 停止しました。');}
-
-    // 誰でも自分の自販機を作成可能
-    if(i.commandName==='shop-create'){
-      const name=i.options.getString('name').trim();
-      const managerRole=i.options.getRole('manager_role');
-      const orderChannel=i.options.getChannel('order_channel');
-      const result=db.prepare('INSERT INTO shops(guild_id,owner_user_id,name,manager_role_id,order_channel_id) VALUES(?,?,?,?,?)').run(i.guildId,i.user.id,name,managerRole?.id||'',orderChannel?.id||i.channelId);
-      return i.reply({content:`✅ 自動販売機を作成しました。\nID: **${result.lastInsertRowid}**\n名前: **${name}**\nオーナー: <@${i.user.id}>${managerRole?`\n設定ロール: ${managerRole}`:''}\n注文通知: <#${orderChannel?.id||i.channelId}>`,ephemeral:true});
-    }
-
-    if(i.commandName==='shop-list'){
-      const rows=db.prepare('SELECT * FROM shops WHERE guild_id=? AND active=1 ORDER BY id DESC LIMIT 50').all(i.guildId);
-      return i.reply({content:rows.length?rows.map(s=>`#${s.id} **${s.name}** / owner <@${s.owner_user_id}>${s.manager_role_id?` / 管理 <@&${s.manager_role_id}>`:''}`).join('\n'):'自動販売機はまだありません。`/shop-create` で作成できます。',ephemeral:true});
-    }
-
-    if(i.commandName==='shop-panel'){
-      const shopId=i.options.getInteger('shop_id');
-      const shop=getShop(i.guildId,shopId);
-      if(!shop||!shop.active)return i.reply({content:'自動販売機が見つかりません。',ephemeral:true});
-      if(!canManageShop(i,shop))return i.reply({content:'この自動販売機を設置する権限がありません。',ephemeral:true});
-      const result=shopPanel(i.guildId,shopId);
-      if(!result?.payload)return i.reply({content:'この自動販売機には販売中の商品がありません。先に `/product-add` で追加してください。',ephemeral:true});
-      await i.channel.send(result.payload);
-      return i.reply({content:'✅ 自動販売機を設置しました。',ephemeral:true});
-    }
-
-    if(i.commandName==='shop-config'){
-      const shopId=i.options.getInteger('shop_id');
-      const shop=getShop(i.guildId,shopId);
-      if(!shop)return i.reply({content:'自動販売機が見つかりません。',ephemeral:true});
-      if(!canManageShop(i,shop))return i.reply({content:'この自動販売機を設定する権限がありません。',ephemeral:true});
-      const name=i.options.getString('name');
-      const role=i.options.getRole('manager_role');
-      const channel=i.options.getChannel('order_channel');
-      if(!name&&!role&&!channel)return i.reply({content:'変更したい項目を1つ以上指定してください。',ephemeral:true});
-      if(name)db.prepare('UPDATE shops SET name=? WHERE id=? AND guild_id=?').run(name.trim(),shopId,i.guildId);
-      if(role)db.prepare('UPDATE shops SET manager_role_id=? WHERE id=? AND guild_id=?').run(role.id,shopId,i.guildId);
-      if(channel)db.prepare('UPDATE shops SET order_channel_id=? WHERE id=? AND guild_id=?').run(channel.id,shopId,i.guildId);
-      return i.reply({content:'✅ 自動販売機設定を更新しました。',ephemeral:true});
-    }
-
-    if(i.commandName==='shop-delete'){
-      const shopId=i.options.getInteger('shop_id');
-      const shop=getShop(i.guildId,shopId);
-      if(!shop)return i.reply({content:'自動販売機が見つかりません。',ephemeral:true});
-      // 停止はオーナー、サーバー管理者、BOTオーナーのみ。管理ロールだけでは削除不可
-      const ownerOrHigher=shop.owner_user_id===i.user.id || isServerAdmin(i) || isBotOwner(i);
-      if(!ownerOrHigher)return i.reply({content:'自動販売機の停止はオーナー・サーバー管理者・BOTオーナーのみ可能です。',ephemeral:true});
-      db.prepare('UPDATE shops SET active=0 WHERE id=? AND guild_id=?').run(shopId,i.guildId);
-      db.prepare('UPDATE products SET active=0 WHERE shop_id=? AND guild_id=?').run(shopId,i.guildId);
-      return i.reply({content:'🛑 自動販売機を停止しました。',ephemeral:true});
-    }
-
-    if(i.commandName==='product-add'){
-      const shopId=i.options.getInteger('shop_id');
-      const shop=getShop(i.guildId,shopId);
-      if(!shop||!shop.active)return i.reply({content:'自動販売機が見つかりません。',ephemeral:true});
-      if(!canManageShop(i,shop))return i.reply({content:'この自動販売機に商品を追加する権限がありません。',ephemeral:true});
-      db.prepare('INSERT INTO products(guild_id,shop_id,name,price,stock,description,delivery_text,delivery_file_url,role_id) VALUES(?,?,?,?,?,?,?,?,?)').run(i.guildId,shopId,i.options.getString('name'),i.options.getInteger('price'),i.options.getInteger('stock'),i.options.getString('description')||'',i.options.getString('delivery_text')||'',i.options.getString('delivery_file_url')||'',i.options.getRole('role')?.id||'');
-      return i.reply({content:`✅ **${shop.name}** に商品を追加しました。`,ephemeral:true});
-    }
-
-    if(i.commandName==='product-list'){
-      const shopId=i.options.getInteger('shop_id');
-      const shop=getShop(i.guildId,shopId);
-      if(!shop)return i.reply({content:'自動販売機が見つかりません。',ephemeral:true});
-      if(!canManageShop(i,shop))return i.reply({content:'この自動販売機の商品管理権限がありません。',ephemeral:true});
-      const rows=db.prepare('SELECT * FROM products WHERE guild_id=? AND shop_id=? ORDER BY id DESC LIMIT 50').all(i.guildId,shopId);
-      return i.reply({content:rows.length?rows.map(p=>`#${p.id} ${p.name} ¥${p.price} 在庫:${p.stock<0?'∞':p.stock} ${p.active?'販売中':'停止'}`).join('\n'):'商品なし',ephemeral:true});
-    }
-
-    if(i.commandName==='order-list'){
-      const shopId=i.options.getInteger('shop_id');
-      const shop=getShop(i.guildId,shopId);
-      if(!shop)return i.reply({content:'自動販売機が見つかりません。',ephemeral:true});
-      if(!canManageShop(i,shop))return i.reply({content:'この自動販売機の注文を見る権限がありません。',ephemeral:true});
-      const rows=db.prepare('SELECT o.*,p.name FROM orders o JOIN products p ON p.id=o.product_id WHERE o.guild_id=? AND o.shop_id=? ORDER BY o.id DESC LIMIT 30').all(i.guildId,shopId);
-      return i.reply({content:rows.length?rows.map(o=>`${o.order_code} | ${o.name} x${o.quantity||1} | <@${o.user_id}> | ¥${o.amount} | ${o.status}`).join('\n'):'注文なし',ephemeral:true});
-    }
-
-    // サーバー共通設定は管理者/BOTオーナーのみ
-    if(['verify-panel','role-panel','ticket-panel','setting','autoreply-add','role-add'].includes(i.commandName) && !await requireAdmin(i)) return;
-    if(i.commandName==='verify-panel')return i.channel.send(verifyPanel()).then(()=>i.reply({content:'設置しました。',ephemeral:true}));
-    if(i.commandName==='ticket-panel')return i.channel.send(ticketPanel()).then(()=>i.reply({content:'設置しました。',ephemeral:true}));
-    if(i.commandName==='role-panel'){const p=rolePanel(i.guildId);if(!p)return i.reply({content:'先に /role-add でロールを追加してください。',ephemeral:true});return i.channel.send(p).then(()=>i.reply({content:'設置しました。',ephemeral:true}));}
-    if(i.commandName==='setting'){setSetting(i.guildId,i.options.getString('key'),i.options.getString('value'));return i.reply({content:'設定を保存しました。',ephemeral:true});}
-    if(i.commandName==='autoreply-add'){db.prepare('INSERT INTO auto_replies(guild_id,trigger,reply,mode) VALUES(?,?,?,?)').run(i.guildId,i.options.getString('trigger'),i.options.getString('reply'),i.options.getString('mode'));return i.reply({content:'自動返信を追加しました。',ephemeral:true});}
-    if(i.commandName==='role-add'){const r=i.options.getRole('role');db.prepare('INSERT INTO role_options(guild_id,label,role_id) VALUES(?,?,?)').run(i.guildId,i.options.getString('label'),r.id);return i.reply({content:`${r} を追加しました。`,ephemeral:true});}
-  }
-
-  if(i.isStringSelectMenu()){
-    if(i.customId.startsWith('shop_select:')){
-      const shopId=Number(i.customId.split(':')[1]);
-      const p=db.prepare('SELECT * FROM products WHERE id=? AND shop_id=? AND guild_id=? AND active=1').get(Number(i.values[0]),shopId,i.guildId);
-      const view=productPurchaseView(i.guildId,shopId,p);
-      if(!view)return i.reply({content:'商品が見つかりません。',ephemeral:true});
-      return i.reply(view);
-    }
-    if(i.customId==='role_select'){
-      const all=db.prepare('SELECT role_id FROM role_options WHERE guild_id=?').all(i.guildId).map(x=>x.role_id);
-      const member=await i.guild.members.fetch(i.user.id);
-      for(const id of all){if(i.values.includes(id))await member.roles.add(id).catch(()=>{});else await member.roles.remove(id).catch(()=>{});}
-      return i.reply({content:'ロールを更新しました。',ephemeral:true});
-    }
-  }
-
-  if(i.isModalSubmit()){
-    if(i.customId.startsWith('purchase_submit:')){
-      const [,shopId,productId]=i.customId.split(':');
-      return submitOrder(i,Number(shopId),Number(productId));
-    }
-  }
-
-  if(i.isButton()){
-    if(i.customId==='verify'){const rid=getSettings(i.guildId).verification_role_id;if(!rid)return i.reply({content:'認証ロールが未設定です。',ephemeral:true});await i.member.roles.add(rid);return i.reply({content:'✅ 認証しました。',ephemeral:true});}
-    if(i.customId==='ticket_create')return createTicket(i);
-    if(i.customId==='ticket_close')return closeTicket(i);
-    if(i.customId.startsWith('buy:')){const [,shopId,productId]=i.customId.split(':');return showPurchaseModal(i,Number(shopId),Number(productId));}
-    if(i.customId.startsWith('cancel:'))return cancelOrder(i,i.customId.slice(7));
-    if(i.customId.startsWith('approve:'))return approveOrder(i,i.customId.slice(8));
-    if(i.customId.startsWith('reject:'))return rejectOrder(i,i.customId.slice(7));
-  }
-}catch(e){
-  console.error(e);
-  if(i.deferred||i.replied)await i.editReply({content:`エラー: ${e.message}`,components:[]}).catch(()=>{});
-  else await i.reply({content:`エラー: ${e.message}`,ephemeral:true}).catch(()=>{});
-}});
-
-client.login(config.token);
+client.login(process.env.DISCORD_TOKEN);
