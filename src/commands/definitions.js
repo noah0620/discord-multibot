@@ -1,60 +1,120 @@
-import { SlashCommandBuilder } from 'discord.js';
+import { SlashCommandBuilder, PermissionFlagsBits, ChannelType } from 'discord.js';
 
-export const commands = [
-  new SlashCommandBuilder().setName('help').setDescription('BOTのヘルプを表示'),
-  new SlashCommandBuilder().setName('verify-panel').setDescription('認証パネルを設置'),
-  new SlashCommandBuilder().setName('role-panel').setDescription('ロール選択パネルを設置'),
-  new SlashCommandBuilder().setName('ticket-panel').setDescription('チケット作成パネルを設置'),
+export const commandData = [
+  new SlashCommandBuilder().setName('help').setDescription('BOTの機能一覧を表示'),
+  new SlashCommandBuilder().setName('owner-status').setDescription('BOTオーナー判定を確認'),
 
-  new SlashCommandBuilder().setName('shop-create').setDescription('自分の自動販売機を作成（誰でも使用可能）')
-    .addStringOption(o=>o.setName('name').setDescription('自動販売機名').setRequired(true).setMaxLength(80))
-    .addRoleOption(o=>o.setName('manager_role').setDescription('この自販機を設定できるロール（任意）'))
-    .addChannelOption(o=>o.setName('order_channel').setDescription('注文通知を送るチャンネル（任意）')),
+  new SlashCommandBuilder().setName('shop-create').setDescription('自分の自動販売機を作成')
+    .addStringOption(o=>o.setName('name').setDescription('自動販売機名').setRequired(true))
+    .addRoleOption(o=>o.setName('manager_role').setDescription('管理ロール'))
+    .addChannelOption(o=>o.setName('order_channel').setDescription('注文通知先').addChannelTypes(ChannelType.GuildText)),
   new SlashCommandBuilder().setName('shop-list').setDescription('このサーバーの自動販売機一覧'),
-  new SlashCommandBuilder().setName('shop-panel').setDescription('指定した自動販売機パネルを設置')
-    .addIntegerOption(o=>o.setName('shop_id').setDescription('自動販売機ID').setRequired(true).setMinValue(1)),
-  new SlashCommandBuilder().setName('shop-config').setDescription('自動販売機設定を変更')
-    .addIntegerOption(o=>o.setName('shop_id').setDescription('自動販売機ID').setRequired(true).setMinValue(1))
-    .addRoleOption(o=>o.setName('manager_role').setDescription('設定権限ロール'))
-    .addChannelOption(o=>o.setName('order_channel').setDescription('注文通知チャンネル'))
-    .addStringOption(o=>o.setName('name').setDescription('新しい自販機名').setMaxLength(80)),
-  new SlashCommandBuilder().setName('shop-delete').setDescription('自分の自動販売機を停止')
-    .addIntegerOption(o=>o.setName('shop_id').setDescription('自動販売機ID').setRequired(true).setMinValue(1)),
-
-  new SlashCommandBuilder().setName('product-add').setDescription('自動販売機に商品を追加')
-    .addIntegerOption(o=>o.setName('shop_id').setDescription('自動販売機ID').setRequired(true).setMinValue(1))
+  new SlashCommandBuilder().setName('shop-config').setDescription('自動販売機設定')
+    .addIntegerOption(o=>o.setName('shop_id').setDescription('自販機ID').setRequired(true))
+    .addRoleOption(o=>o.setName('manager_role').setDescription('管理ロール'))
+    .addChannelOption(o=>o.setName('order_channel').setDescription('注文通知先').addChannelTypes(ChannelType.GuildText)),
+  new SlashCommandBuilder().setName('product-add').setDescription('自動販売機に商品追加')
+    .addIntegerOption(o=>o.setName('shop_id').setDescription('自販機ID').setRequired(true))
     .addStringOption(o=>o.setName('name').setDescription('商品名').setRequired(true))
     .addIntegerOption(o=>o.setName('price').setDescription('単価').setRequired(true).setMinValue(0))
-    .addIntegerOption(o=>o.setName('stock').setDescription('在庫（-1=無制限）').setRequired(true).setMinValue(-1))
-    .addStringOption(o=>o.setName('description').setDescription('説明'))
-    .addStringOption(o=>o.setName('delivery_text').setDescription('購入後にDMで送る文章'))
-    .addStringOption(o=>o.setName('delivery_file_url').setDescription('購入後に送るファイルURL'))
-    .addRoleOption(o=>o.setName('role').setDescription('購入後に付与するロール')),
-  new SlashCommandBuilder().setName('product-list').setDescription('指定自動販売機の商品一覧')
-    .addIntegerOption(o=>o.setName('shop_id').setDescription('自動販売機ID').setRequired(true).setMinValue(1)),
-  new SlashCommandBuilder().setName('order-list').setDescription('指定自動販売機の注文一覧')
-    .addIntegerOption(o=>o.setName('shop_id').setDescription('自動販売機ID').setRequired(true).setMinValue(1)),
+    .addIntegerOption(o=>o.setName('stock').setDescription('在庫').setRequired(true).setMinValue(0))
+    .addStringOption(o=>o.setName('delivery').setDescription('購入完了後DM内容').setRequired(true)),
+  new SlashCommandBuilder().setName('shop-panel').setDescription('販売パネル設置')
+    .addIntegerOption(o=>o.setName('shop_id').setDescription('自販機ID').setRequired(true)),
 
-  new SlashCommandBuilder().setName('setting').setDescription('サーバー共通BOT設定')
-    .addStringOption(o=>o.setName('key').setDescription('設定').setRequired(true).addChoices(
-      {name:'認証ロールID',value:'verification_role_id'},
-      {name:'入室チャンネルID',value:'welcome_channel_id'},{name:'退室チャンネルID',value:'leave_channel_id'},
-      {name:'ログチャンネルID',value:'log_channel_id'},{name:'チケットカテゴリID',value:'ticket_category_id'},
-      {name:'サポートロールID',value:'ticket_support_role_id'},{name:'地震速報チャンネルID',value:'earthquake_channel_id'},
-      {name:'天気チャンネルID',value:'weather_channel_id'}))
-    .addStringOption(o=>o.setName('value').setDescription('値').setRequired(true)),
-  new SlashCommandBuilder().setName('autoreply-add').setDescription('自動返信を追加')
-    .addStringOption(o=>o.setName('trigger').setDescription('反応語').setRequired(true))
-    .addStringOption(o=>o.setName('reply').setDescription('返信').setRequired(true))
-    .addStringOption(o=>o.setName('mode').setDescription('判定').setRequired(true).addChoices({name:'部分一致',value:'contains'},{name:'完全一致',value:'exact'})),
-  new SlashCommandBuilder().setName('role-add').setDescription('選択可能ロールを追加')
-    .addStringOption(o=>o.setName('label').setDescription('表示名').setRequired(true))
-    .addRoleOption(o=>o.setName('role').setDescription('ロール').setRequired(true)),
-  new SlashCommandBuilder().setName('weather').setDescription('天気予報を表示')
-    .addStringOption(o=>o.setName('place').setDescription('都市名（例: Tokyo, Chiba）').setRequired(true)),
-  new SlashCommandBuilder().setName('image').setDescription('AI画像を生成')
-    .addStringOption(o=>o.setName('prompt').setDescription('画像の内容').setRequired(true)),
-  new SlashCommandBuilder().setName('play').setDescription('音楽/音声URLを再生')
-    .addStringOption(o=>o.setName('url').setDescription('再生URL').setRequired(true)),
-  new SlashCommandBuilder().setName('stop').setDescription('音楽再生を停止')
-].map(c=>c.toJSON());
+  new SlashCommandBuilder().setName('verify-panel').setDescription('認証パネル')
+    .addRoleOption(o=>o.setName('role').setDescription('認証後付与ロール').setRequired(true))
+    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
+
+  new SlashCommandBuilder().setName('role-panel').setDescription('最大5ロールの選択パネル')
+    .addRoleOption(o=>o.setName('role1').setDescription('ロール1').setRequired(true))
+    .addStringOption(o=>o.setName('label1').setDescription('表示名1').setRequired(true))
+    .addRoleOption(o=>o.setName('role2').setDescription('ロール2'))
+    .addStringOption(o=>o.setName('label2').setDescription('表示名2'))
+    .addRoleOption(o=>o.setName('role3').setDescription('ロール3'))
+    .addStringOption(o=>o.setName('label3').setDescription('表示名3'))
+    .addRoleOption(o=>o.setName('role4').setDescription('ロール4'))
+    .addStringOption(o=>o.setName('label4').setDescription('表示名4'))
+    .addRoleOption(o=>o.setName('role5').setDescription('ロール5'))
+    .addStringOption(o=>o.setName('label5').setDescription('表示名5'))
+    .setDefaultMemberPermissions(PermissionFlagsBits.ManageRoles),
+
+  new SlashCommandBuilder().setName('ticket-panel').setDescription('チケット作成パネル')
+    .setDefaultMemberPermissions(PermissionFlagsBits.ManageChannels),
+
+  new SlashCommandBuilder().setName('autoreply-add').setDescription('自動返信追加')
+    .addStringOption(o=>o.setName('keyword').setDescription('キーワード').setRequired(true))
+    .addStringOption(o=>o.setName('reply').setDescription('返信内容').setRequired(true))
+    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
+  new SlashCommandBuilder().setName('autoreply-remove').setDescription('自動返信削除')
+    .addStringOption(o=>o.setName('keyword').setDescription('キーワード').setRequired(true))
+    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
+
+  new SlashCommandBuilder().setName('guild-settings').setDescription('通知先を設定')
+    .addChannelOption(o=>o.setName('join_log').setDescription('参加通知').addChannelTypes(ChannelType.GuildText))
+    .addChannelOption(o=>o.setName('leave_log').setDescription('退出通知').addChannelTypes(ChannelType.GuildText))
+    .addChannelOption(o=>o.setName('earthquake').setDescription('地震通知').addChannelTypes(ChannelType.GuildText))
+    .addChannelOption(o=>o.setName('weather').setDescription('天気通知').addChannelTypes(ChannelType.GuildText))
+    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
+
+  new SlashCommandBuilder().setName('weather').setDescription('都道府県・県庁所在地の天気')
+    .addStringOption(o=>o.setName('region').setDescription('地域').setAutocomplete(true).setRequired(true)),
+  new SlashCommandBuilder().setName('weather-register').setDescription('自動天気通知地域を追加')
+    .addStringOption(o=>o.setName('region').setDescription('地域').setAutocomplete(true).setRequired(true))
+    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
+  new SlashCommandBuilder().setName('weather-list').setDescription('登録済み天気地域')
+    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
+  new SlashCommandBuilder().setName('weather-auto').setDescription('毎日の自動天気投稿をON/OFF')
+    .addBooleanOption(o=>o.setName('enabled').setDescription('ON/OFF').setRequired(true))
+    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
+
+  new SlashCommandBuilder().setName('earthquake').setDescription('最新地震情報'),
+  new SlashCommandBuilder().setName('earthquake-register').setDescription('地震通知地域を追加')
+    .addStringOption(o=>o.setName('region').setDescription('地域').setAutocomplete(true).setRequired(true))
+    .addIntegerOption(o=>o.setName('min_intensity').setDescription('最低震度 1〜7').setMinValue(1).setMaxValue(7))
+    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
+  new SlashCommandBuilder().setName('earthquake-list').setDescription('登録済み地震地域')
+    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
+  new SlashCommandBuilder().setName('earthquake-auto').setDescription('自動地震速報ON/OFF')
+    .addBooleanOption(o=>o.setName('enabled').setDescription('ON/OFF').setRequired(true))
+    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
+
+  new SlashCommandBuilder().setName('schedule-post').setDescription('予約投稿')
+    .addChannelOption(o=>o.setName('channel').setDescription('投稿先').setRequired(true).addChannelTypes(ChannelType.GuildText))
+    .addStringOption(o=>o.setName('datetime').setDescription('例 2026-09-15 20:00').setRequired(true))
+    .addStringOption(o=>o.setName('message').setDescription('本文').setRequired(true))
+    .addIntegerOption(o=>o.setName('delete_after_minutes').setDescription('投稿後に削除する分数').setMinValue(1))
+    .setDefaultMemberPermissions(PermissionFlagsBits.ManageMessages),
+  new SlashCommandBuilder().setName('schedule-list').setDescription('予約投稿一覧')
+    .setDefaultMemberPermissions(PermissionFlagsBits.ManageMessages),
+  new SlashCommandBuilder().setName('schedule-cancel').setDescription('予約投稿削除')
+    .addIntegerOption(o=>o.setName('id').setDescription('予約ID').setRequired(true))
+    .setDefaultMemberPermissions(PermissionFlagsBits.ManageMessages),
+
+  new SlashCommandBuilder().setName('moderation-rule').setDescription('指定発言への自動処理ルール')
+    .addStringOption(o=>o.setName('keyword').setDescription('検知語句').setRequired(true))
+    .addStringOption(o=>o.setName('action').setDescription('処理').setRequired(true).addChoices(
+      {name:'削除',value:'delete'},{name:'タイムアウト',value:'timeout'},{name:'Kick',value:'kick'},{name:'BAN',value:'ban'}
+    ))
+    .setDefaultMemberPermissions(PermissionFlagsBits.ModerateMembers),
+  new SlashCommandBuilder().setName('moderation-list').setDescription('自動処理ルール一覧')
+    .setDefaultMemberPermissions(PermissionFlagsBits.ModerateMembers),
+  new SlashCommandBuilder().setName('moderation-remove').setDescription('自動処理ルール削除')
+    .addIntegerOption(o=>o.setName('id').setDescription('ルールID').setRequired(true))
+    .setDefaultMemberPermissions(PermissionFlagsBits.ModerateMembers),
+
+  new SlashCommandBuilder().setName('play').setDescription('直接音声URLをVCキューへ追加')
+    .addStringOption(o=>o.setName('url').setDescription('直接再生可能な音声URL').setRequired(true)),
+  new SlashCommandBuilder().setName('queue').setDescription('音楽キュー'),
+  new SlashCommandBuilder().setName('skip').setDescription('現在曲をスキップ'),
+  new SlashCommandBuilder().setName('stop').setDescription('音楽停止'),
+
+  new SlashCommandBuilder().setName('ai-image').setDescription('AI画像生成 free/high')
+    .addStringOption(o=>o.setName('prompt').setDescription('生成内容').setRequired(true))
+    .addStringOption(o=>o.setName('quality').setDescription('モード').addChoices({name:'無料優先',value:'free'},{name:'高精度API',value:'high'})),
+  new SlashCommandBuilder().setName('ai-video').setDescription('AI動画生成 free/high')
+    .addStringOption(o=>o.setName('prompt').setDescription('生成内容').setRequired(true))
+    .addStringOption(o=>o.setName('quality').setDescription('モード').addChoices({name:'無料優先',value:'free'},{name:'高精度API',value:'high'})),
+  new SlashCommandBuilder().setName('video').setDescription('動画URLを投稿')
+    .addStringOption(o=>o.setName('url').setDescription('動画URL').setRequired(true))
+];
