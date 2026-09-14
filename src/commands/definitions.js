@@ -57,14 +57,17 @@ export const commandData = [
     .addChannelOption(o=>o.setName('weather').setDescription('天気通知').addChannelTypes(ChannelType.GuildText))
     .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
 
-  new SlashCommandBuilder().setName('weather').setDescription('都道府県・県庁所在地の天気')
-    .addStringOption(o=>o.setName('region').setDescription('地域').setAutocomplete(true).setRequired(true)),
-  new SlashCommandBuilder().setName('weather-register').setDescription('自動天気通知地域を追加')
-    .addStringOption(o=>o.setName('region').setDescription('地域').setAutocomplete(true).setRequired(true))
+  new SlashCommandBuilder().setName('weather').setDescription('登録地域の天気を表示。地域指定も可能')
+    .addStringOption(o=>o.setName('region').setDescription('省略時は登録済み地域をすべて表示').setAutocomplete(true)),
+  new SlashCommandBuilder().setName('weather-register').setDescription('【管理者】天気地域を追加・削除')
+    .addStringOption(o=>o.setName('action').setDescription('操作').setRequired(true).addChoices(
+      {name:'追加',value:'add'},{name:'削除',value:'remove'},{name:'全削除',value:'clear'}
+    ))
+    .addStringOption(o=>o.setName('region').setDescription('47都道府県・地方・全国').setAutocomplete(true))
     .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
-  new SlashCommandBuilder().setName('weather-list').setDescription('登録済み天気地域')
+  new SlashCommandBuilder().setName('weather-admin').setDescription('【管理者】天気地域登録の詳細を表示')
     .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
-  new SlashCommandBuilder().setName('weather-auto').setDescription('サーバーごとの自動天気投稿時刻を設定')
+  new SlashCommandBuilder().setName('weather-auto').setDescription('【管理者】サーバーごとの自動天気投稿時刻を設定')
     .addBooleanOption(o=>o.setName('enabled').setDescription('ON/OFF').setRequired(true))
     .addStringOption(o=>o.setName('time').setDescription('毎日の投稿時刻 例: 07:00 / 18:30'))
     .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),

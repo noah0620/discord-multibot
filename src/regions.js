@@ -8,11 +8,51 @@ export const PREFECTURES = [
   ["長崎県","長崎市"],["熊本県","熊本市"],["大分県","大分市"],["宮崎県","宮崎市"],["鹿児島県","鹿児島市"],["沖縄県","那覇市"]
 ];
 
+export const WEATHER_AREAS = {
+  "北海道地方": ["北海道"],
+  "東北地方": ["青森県","岩手県","宮城県","秋田県","山形県","福島県"],
+  "関東地方": ["茨城県","栃木県","群馬県","埼玉県","千葉県","東京都","神奈川県"],
+  "中部地方": ["新潟県","富山県","石川県","福井県","山梨県","長野県","岐阜県","静岡県","愛知県"],
+  "近畿地方": ["三重県","滋賀県","京都府","大阪府","兵庫県","奈良県","和歌山県"],
+  "中国地方": ["鳥取県","島根県","岡山県","広島県","山口県"],
+  "四国地方": ["徳島県","香川県","愛媛県","高知県"],
+  "九州・沖縄地方": ["福岡県","佐賀県","長崎県","熊本県","大分県","宮崎県","鹿児島県","沖縄県"]
+};
+
+export const ALL_PREFECTURE_NAMES = PREFECTURES.map(([pref]) => pref);
+
+export function expandWeatherRegion(value) {
+  if (value === "全国47都道府県") return [...ALL_PREFECTURE_NAMES];
+  if (WEATHER_AREAS[value]) return [...WEATHER_AREAS[value]];
+
+  const pref = PREFECTURES.find(([p, capital]) => p === value || capital === value);
+  return pref ? [pref[0]] : [];
+}
+
 export function searchRegionChoices(input = "") {
   const q = input.trim().toLowerCase();
-  const all = PREFECTURES.flatMap(([pref, capital]) => [
-    { name: pref, value: pref },
-    { name: `${capital}（${pref}）`, value: capital }
-  ]);
-  return (q ? all.filter(x => x.name.toLowerCase().includes(q) || x.value.toLowerCase().includes(q)) : all).slice(0, 25);
+
+  const areaChoices = [
+    { name: "全国47都道府県", value: "全国47都道府県" },
+    ...Object.keys(WEATHER_AREAS).map(area => ({ name: area, value: area }))
+  ];
+
+  const prefChoices = PREFECTURES.map(([pref, capital]) => ({
+    name: `${pref}（${capital}）`,
+    value: pref
+  }));
+
+  const all = [...areaChoices, ...prefChoices];
+
+  // Discord autocomplete is limited to 25 results.
+  // Empty input: show regional shortcuts + first prefectures.
+  // Typed input: search across all 47 prefectures and every regional shortcut.
+  const filtered = q
+    ? all.filter(x =>
+        x.name.toLowerCase().includes(q) ||
+        x.value.toLowerCase().includes(q)
+      )
+    : all;
+
+  return filtered.slice(0, 25);
 }

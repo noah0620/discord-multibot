@@ -6,7 +6,7 @@ import {
 import { joinVoiceChannel, createAudioPlayer, createAudioResource, AudioPlayerStatus } from '@discordjs/voice';
 import { config, assertConfig, isBotOwner } from './config.js';
 import { loadStore, saveStore, guildData } from './db/store.js';
-import { searchRegionChoices, PREFECTURES } from './regions.js';
+import { searchRegionChoices, PREFECTURES, WEATHER_AREAS, expandWeatherRegion } from './regions.js';
 import path from 'node:path';
 
 assertConfig();
@@ -153,6 +153,52 @@ async function weatherText(name) {
   ].join('\\n');
 }
 
+
+function splitDiscordBlocks(header, blocks, maxLength = 1900) {
+  const pages = [];
+  let current = header ? `${header}\n\n` : '';
+
+  for (const block of blocks) {
+    const next = current ? `${current}${block}\n\n` : `${block}\n\n`;
+    if (next.length > maxLength && current.trim()) {
+      pages.push(current.trim());
+      current = `${block}\n\n`;
+    } else {
+      current = next;
+    }
+  }
+
+  if (current.trim()) pages.push(current.trim());
+  return pages;
+}
+
+async function buildWeatherPages(regions) {
+  const unique = [...new Set(regions)];
+  const texts = [];
+
+  for (const region of unique) {
+    try {
+      texts.push(await weatherText(region));
+    } catch (e) {
+      texts.push(`❌ ${region} の天気取得に失敗しました。`);
+      console.error(`weather ${region}`, e);
+    }
+  }
+
+  return splitDiscordBlocks(`**${jpWeatherTimestamp()}**`, texts);
+}
+
+async function replyWeatherPages(interaction, pages) {
+  if (!pages.length) {
+    return interaction.editReply('❌ 表示する天気地域が登録されていません。');
+  }
+
+  await interaction.editReply(pages[0]);
+  for (const page of pages.slice(1)) {
+    await interaction.followUp(page);
+  }
+}
+
 async function fetchLatestEarthquake() {
   const d = await fetch('https://api.p2pquake.net/v2/history?codes=551&limit=1').then(r=>r.json());
   return d?.[0] || null;
@@ -225,7 +271,8 @@ client.on(Events.InteractionCreate, async interaction => {
 /moderation-rule /moderation-list /moderation-remove
 
 🌤 天気
-/weather /weather-register /weather-list /weather-auto（サーバー別時刻）
+/weather
+管理者: /weather-register /weather-admin /weather-auto
 
 🚨 地震
 /earthquake /earthquake-register /earthquake-list /earthquake-auto
@@ -316,20 +363,95 @@ client.on(Events.InteractionCreate, async interaction => {
       }
 
       if (n === 'weather') {
-        await interaction.deferReply();const wt=await weatherText(interaction.options.getString('region',true));return interaction.editReply(`**${jpWeatherTimestamp()}**\n\n${wt}`);
-      }
-      if (n === 'weather-register') {
-        const g=guildData(store,interaction.guildId),r=interaction.options.getString('region',true);
-        if(!g.weatherRegions.includes(r))g.weatherRegions.push(r);saveStore(store);
-        return interaction.reply({content:`✅ 天気地域: ${g.weatherRegions.join(' / ')}`,ephemeral:true});
-      }
-      if (n === 'weather-list') {
         const g=guildData(store,interaction.guildId);
-        return interaction.reply({
-          content:`地域: ${g.weatherRegions.join(' / ')||'未登録'}\n自動投稿: ${g.weatherAutoEnabled?'ON':'OFF'}\n投稿時刻: ${g.weatherAutoTime || '07:00'}（日本時間）`,
-          ephemeral:true
-        });
+        const selected=interaction.options.getString('region');
+
+        let regions;
+        if(selected){
+          const expanded=expandWeatherRegion(selected);
+          regions=expanded.length ? expanded : [selected];
+        } else {
+          regions=[...(g.weatherRegions || [])];
+        }
+
+        if(!regions.length){
+          return interaction.reply({
+            content:'ℹ️ このサーバーでは天気地域がまだ登録されていません。サーバー管理者が `/weather-register` で登録してください。',
+            ephemeral:true
+          });
+        }
+
+        await interaction.deferReply();
+        const pages=await buildWeatherPages(regions);
+        return replyWeatherPages(interaction,pages);
       }
+
+      if (n === 'weather-register') {
+        const g=guildData(store,interaction.guildId);
+        const action=interaction.options.getString('action',true);
+        const selected=interaction.options.getString('region');
+
+        if(action==='clear'){
+          g.weatherRegions=[];
+          g.lastWeatherPostDate=null;
+          saveStore(store);
+          return interaction.reply({content:'✅ 天気地域をすべて削除しました。',ephemeral:true});
+        }
+
+        if(!selected){
+          return interaction.reply({content:'❌ 追加または削除する地域を指定してください。',ephemeral:true});
+        }
+
+        const expanded=expandWeatherRegion(selected);
+        if(!expanded.length){
+          return interaction.reply({content:'❌ 地域が見つかりません。都道府県名・地方名・全国47都道府県から選択してください。',ephemeral:true});
+        }
+
+        if(action==='add'){
+          g.weatherRegions=[...new Set([...(g.weatherRegions || []),...expanded])];
+          g.lastWeatherPostDate=null;
+          saveStore(store);
+          return interaction.reply({
+            content:`✅ **${selected}** を追加しました。${expanded.length > 1 ? `（${expanded.length}都道府県）` : ''}\n現在の登録数: **${g.weatherRegions.length}都道府県**`,
+            ephemeral:true
+          });
+        }
+
+        if(action==='remove'){
+          const removeSet=new Set(expanded);
+          g.weatherRegions=(g.weatherRegions || []).filter(x=>!removeSet.has(x));
+          g.lastWeatherPostDate=null;
+          saveStore(store);
+          return interaction.reply({
+            content:`✅ **${selected}** を削除しました。\n現在の登録数: **${g.weatherRegions.length}都道府県**`,
+            ephemeral:true
+          });
+        }
+      }
+
+      if (n === 'weather-admin') {
+        const g=guildData(store,interaction.guildId);
+        const registered=[...(g.weatherRegions || [])];
+
+        const areaStatus=Object.entries(WEATHER_AREAS).map(([area,prefs])=>{
+          const count=prefs.filter(p=>registered.includes(p)).length;
+          return `${count===prefs.length?'✅':count?'🟡':'⬜'} ${area}: ${count}/${prefs.length}`;
+        }).join('\n');
+
+        const regionText=registered.length ? registered.join(' / ') : '未登録';
+
+        const pages=splitDiscordBlocks(
+          `🔒 **天気管理者ページ**\nサーバー: **${interaction.guild?.name || interaction.guildId}**\n自動投稿: **${g.weatherAutoEnabled?'ON':'OFF'}**\n投稿時刻: **${g.weatherAutoTime || '07:00'}（日本時間）**\n投稿先: ${g.weatherChannelId?`<#${g.weatherChannelId}>`:'未設定'}\n登録数: **${registered.length}/47**\n\n**地方別登録状況**\n${areaStatus}\n\n**登録都道府県**`,
+          [regionText]
+        );
+
+        await interaction.reply({content:pages[0],ephemeral:true});
+        for(const page of pages.slice(1)){
+          await interaction.followUp({content:page,ephemeral:true});
+        }
+        return;
+      }
+
       if (n === 'weather-auto') {
         const g=guildData(store,interaction.guildId);
         const enabled=interaction.options.getBoolean('enabled',true);
@@ -633,9 +755,10 @@ setInterval(async()=>{
     const ch=guild.channels.cache.get(g.weatherChannelId);
     if(!ch)continue;
 
-    const texts=[];
-    for(const r of g.weatherRegions.slice(0,10))texts.push(await weatherText(r));
-    await ch.send(`**${jpWeatherTimestamp()}**\n\n${texts.join('\n\n')}`).catch(()=>{});
+    const pages=await buildWeatherPages(g.weatherRegions);
+    for(const page of pages){
+      await ch.send(page).catch(()=>{});
+    }
 
     g.lastWeatherPostDate=dateKey;
     saveStore(store);
