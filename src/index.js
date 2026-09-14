@@ -3,15 +3,58 @@ import {
   ActionRowBuilder, ButtonBuilder, ButtonStyle, ModalBuilder,
   TextInputBuilder, TextInputStyle, ChannelType, PermissionFlagsBits
 } from 'discord.js';
-import { joinVoiceChannel, createAudioPlayer, createAudioResource, AudioPlayerStatus } from '@discordjs/voice';
+import { joinVoiceChannel, createAudioPlayer, createAudioResource, AudioPlayerStatus, StreamType } from '@discordjs/voice';
 import { config, assertConfig, isBotOwner } from './config.js';
 import { loadStore, saveStore, guildData } from './db/store.js';
 import { searchRegionChoices, searchPrefectureChoices, PREFECTURES, WEATHER_AREAS, expandWeatherRegion } from './regions.js';
 import path from 'node:path';
+import { spawn } from 'node:child_process';
+import ffmpegPath from 'ffmpeg-static';
 
 assertConfig();
 const store = loadStore();
 const players = new Map();
+
+function validHttpUrl(value) {
+  try {
+    const u = new URL(value);
+    return u.protocol === 'https:' || u.protocol === 'http:';
+  } catch {
+    return false;
+  }
+}
+
+function createFfmpegAudio(url) {
+  if (!ffmpegPath) throw new Error('FFmpegが見つかりません。npm installを実行してください。');
+  if (!validHttpUrl(url)) throw new Error('http/https の直接音声URLを指定してください。');
+
+  const proc = spawn(ffmpegPath, [
+    '-hide_banner',
+    '-loglevel', 'error',
+    '-reconnect', '1',
+    '-reconnect_streamed', '1',
+    '-reconnect_delay_max', '5',
+    '-i', url,
+    '-vn',
+    '-f', 's16le',
+    '-ar', '48000',
+    '-ac', '2',
+    'pipe:1'
+  ], { windowsHide:true });
+
+  proc.stderr.on('data', d => {
+    const msg=String(d).trim();
+    if(msg)console.error('ffmpeg:',msg);
+  });
+
+  const resource=createAudioResource(proc.stdout,{
+    inputType:StreamType.Raw,
+    inlineVolume:true
+  });
+
+  return {proc,resource};
+}
+
 
 const client = new Client({
   intents: [
@@ -321,7 +364,7 @@ client.on(Events.InteractionCreate, async interaction => {
             .setDescription(
 `1. 🛒 **自販機・商品・PayPay購入・在庫・管理者**
 /shop-create /shop-list /shop-config /shop-delete /shop-admin
-/product-add /product-list /order-list /shop-panel
+/product-add /product-list /product-edit /product-remove /order-list /shop-panel
 
 2. ✅ **管理者承認型認証・認証管理ページ**
 /verify-panel /verify-admin /verify-status
@@ -356,6 +399,9 @@ client.on(Events.InteractionCreate, async interaction => {
 12. 👑 **BOTオーナー機能**
 /owner-status
 
+🔧 **動作診断**
+/diagnostics
+
 補助: /video
 AI生成機能は搭載していません。`
             )
@@ -367,6 +413,29 @@ AI生成機能は搭載していません。`
       if (n === 'owner-status') {
         return interaction.reply({ content:isBotOwner(interaction.user.id)?'✅ BOTオーナーです。':'ℹ️ BOTオーナーではありません。', ephemeral:true });
       }
+      if (n === 'diagnostics') {
+        const me=interaction.guild?.members?.me;
+        const g=guildData(store,interaction.guildId);
+        const checks=[
+          ['BOT接続', client.isReady()?'✅':'❌'],
+          ['ロール管理', me?.permissions?.has(PermissionFlagsBits.ManageRoles)?'✅':'❌'],
+          ['チャンネル管理', me?.permissions?.has(PermissionFlagsBits.ManageChannels)?'✅':'❌'],
+          ['メッセージ送信', me?.permissions?.has(PermissionFlagsBits.SendMessages)?'✅':'❌'],
+          ['メンバー管理イベント', 'Developer Portal の SERVER MEMBERS INTENT がON必須'],
+          ['認証ロール', g.verificationRoleId?`<@&${g.verificationRoleId}>`:'未設定'],
+          ['入室通知', g.joinLogChannelId?`<#${g.joinLogChannelId}>`:'未設定'],
+          ['退出通知', g.leaveLogChannelId?`<#${g.leaveLogChannelId}>`:'未設定'],
+          ['天気通知', g.weatherChannelId?`<#${g.weatherChannelId}>`:'未設定'],
+          ['地震通知', g.earthquakeChannelId?`<#${g.earthquakeChannelId}>`:'未設定'],
+          ['チケットカテゴリ', g.ticketCategoryId?`<#${g.ticketCategoryId}>`:'未設定'],
+          ['サポートロール', g.ticketSupportRoleId?`<@&${g.ticketSupportRoleId}>`:'未設定']
+        ];
+        return interaction.reply({
+          content:`🔧 **BOT診断**\n${checks.map(([k,v])=>`**${k}**: ${v}`).join('\n')}`,
+          ephemeral:true
+        });
+      }
+
 
       if (n === 'shop-create') {
         const id = store.nextShopId++;
@@ -480,6 +549,48 @@ AI生成機能は搭載していません。`
         return interaction.reply({content:lines.join('\n')||'商品はありません。',ephemeral:true});
       }
 
+      if (n === 'product-edit') {
+        const shop=store.shops[interaction.options.getInteger('shop_id')];
+        if(!shop||shop.guildId!==interaction.guildId)return interaction.reply({content:'❌ 自販機が見つかりません。',ephemeral:true});
+        if(!isShopManager(interaction,shop))return interaction.reply({content:'❌ 管理権限がありません。',ephemeral:true});
+
+        const productId=interaction.options.getString('product_id',true);
+        const p=(shop.products||[]).find(x=>x.id===productId);
+        if(!p)return interaction.reply({content:'❌ 商品IDが見つかりません。',ephemeral:true});
+
+        const name=interaction.options.getString('name');
+        const price=interaction.options.getInteger('price');
+        const stock=interaction.options.getInteger('stock');
+        const description=interaction.options.getString('description');
+        const delivery=interaction.options.getString('delivery');
+        const fileUrl=interaction.options.getString('delivery_file_url');
+        const role=interaction.options.getRole('role');
+
+        if(name!==null)p.name=name;
+        if(price!==null)p.price=price;
+        if(stock!==null)p.stock=stock;
+        if(description!==null)p.description=description;
+        if(delivery!==null)p.delivery=delivery;
+        if(fileUrl!==null)p.deliveryFileUrl=fileUrl;
+        if(role)p.roleId=role.id;
+
+        saveStore(store);
+        return interaction.reply({content:`✅ 商品 \`${p.id}\`「${p.name}」を更新しました。`,ephemeral:true});
+      }
+
+      if (n === 'product-remove') {
+        const shop=store.shops[interaction.options.getInteger('shop_id')];
+        if(!shop||shop.guildId!==interaction.guildId)return interaction.reply({content:'❌ 自販機が見つかりません。',ephemeral:true});
+        if(!isShopManager(interaction,shop))return interaction.reply({content:'❌ 管理権限がありません。',ephemeral:true});
+
+        const productId=interaction.options.getString('product_id',true);
+        const p=(shop.products||[]).find(x=>x.id===productId);
+        if(!p)return interaction.reply({content:'❌ 商品IDが見つかりません。',ephemeral:true});
+        p.active=false;
+        saveStore(store);
+        return interaction.reply({content:`🛑 商品 \`${p.id}\`「${p.name}」を販売停止しました。`,ephemeral:true});
+      }
+
       if (n === 'order-list') {
         const shop=store.shops[interaction.options.getInteger('shop_id')];
         if(!shop||shop.guildId!==interaction.guildId)return interaction.reply({content:'❌ 自販機が見つかりません。',ephemeral:true});
@@ -505,7 +616,7 @@ AI生成機能は搭載していません。`
           new ActionRowBuilder().addComponents(
             new ButtonBuilder()
               .setCustomId(`buy:${shop.id}:${p.id}`)
-              .setLabel(`${p.name} ¥${p.price}${p.stock<0?' / 在庫∞':` / 在庫${p.stock}`}`)
+              .setLabel(`${p.name} ¥${p.price}${p.stock<0?' / 在庫∞':` / 在庫${p.stock}`}`.slice(0,80))
               .setStyle(ButtonStyle.Success)
           )
         );
@@ -978,8 +1089,8 @@ ${url}
           const connection=joinVoiceChannel({channelId:vc.id,guildId:interaction.guildId,adapterCreator:interaction.guild.voiceAdapterCreator});
           const player=createAudioPlayer();
           connection.subscribe(player);
-          s={connection,player,queue:[],playing:false,current:null,volume:100};
-          player.on(AudioPlayerStatus.Idle,()=>{s.playing=false;s.current=null;playNext(interaction.guildId).catch(console.error);});
+          s={connection,player,queue:[],playing:false,current:null,volume:100,ffmpeg:null};
+          player.on(AudioPlayerStatus.Idle,()=>{try{s.ffmpeg?.kill();}catch{} s.ffmpeg=null;s.playing=false;s.current=null;playNext(interaction.guildId).catch(console.error);});
           players.set(interaction.guildId,s);
         }
 
@@ -1006,7 +1117,7 @@ ${url}`)],
       }
       if (n === 'skip') { players.get(interaction.guildId)?.player.stop(true); return interaction.reply('⏭️ スキップしました。'); }
       if (n === 'stop') {
-        const s=players.get(interaction.guildId);if(s){s.queue.length=0;s.player.stop(true);s.connection.destroy();players.delete(interaction.guildId);}
+        const s=players.get(interaction.guildId);if(s){s.queue.length=0;try{s.ffmpeg?.kill();}catch{}s.player.stop(true);s.connection.destroy();players.delete(interaction.guildId);}
         return interaction.reply('⏹️ 停止しました。');
       }
       if (n === 'pause') {
@@ -1189,6 +1300,7 @@ ${url}`)],
         if(a==='stop'){
           if(s){
             s.queue.length=0;
+            try{s.ffmpeg?.kill();}catch{}
             s.player.stop(true);
             try{s.connection.destroy();}catch{}
             players.delete(interaction.guildId);
@@ -1335,10 +1447,37 @@ ${url}`)],
 });
 
 async function playNext(gid){
-  const s=players.get(gid);if(!s||s.playing||!s.queue.length)return;
+  const s=players.get(gid);
+  if(!s||s.playing||!s.queue.length)return;
+
   const url=s.queue.shift();
-  try{s.current=url;s.playing=true;const resource=createAudioResource(url,{inlineVolume:true});resource.volume?.setVolume((s.volume??100)/100);s.player.play(resource);}
-  catch(e){s.current=null;s.playing=false;console.error(e);return playNext(gid);}
+  try{
+    const {proc,resource}=createFfmpegAudio(url);
+    s.current=url;
+    s.playing=true;
+    s.ffmpeg=proc;
+    resource.volume?.setVolume((s.volume??100)/100);
+
+    proc.on('error',e=>{
+      console.error('ffmpeg process error',e);
+      s.playing=false;
+      s.current=null;
+      s.ffmpeg=null;
+      try{s.player.stop(true);}catch{}
+    });
+
+    proc.on('close',code=>{
+      if(code && code!==0)console.error(`ffmpeg exited: ${code}`);
+    });
+
+    s.player.play(resource);
+  }catch(e){
+    s.current=null;
+    s.playing=false;
+    s.ffmpeg=null;
+    console.error('playNext',e);
+    return playNext(gid);
+  }
 }
 
 setInterval(async()=>{
@@ -1373,7 +1512,9 @@ setInterval(async()=>{
       if(!g.earthquakeAutoEnabled||!g.earthquakeChannelId)continue;
       if(maxN<Number(g.minIntensity||3))continue;
       if(g.earthquakeRegions.length && !g.earthquakeRegions.some(r=>areaText.includes(r.replace(/[都道府県]$/,'')))) continue;
-      guild.channels.cache.get(g.earthquakeChannelId)?.send(earthquakeText(item)).catch(()=>{});
+      const quakeChannel=guild.channels.cache.get(g.earthquakeChannelId)
+        || await guild.channels.fetch(g.earthquakeChannelId).catch(()=>null);
+      if(quakeChannel?.isTextBased())await quakeChannel.send(earthquakeText(item)).catch(()=>{});
     }
   }catch(e){console.error('earthquake watcher',e);}
 },config.earthquakePollSeconds*1000);
@@ -1396,16 +1537,21 @@ setInterval(async()=>{
     if(!g.weatherAutoEnabled || !g.weatherChannelId || !g.weatherRegions.length)continue;
     if(currentTime!==postTime || g.lastWeatherPostDate===dateKey)continue;
 
-    const ch=guild.channels.cache.get(g.weatherChannelId);
-    if(!ch)continue;
+    try{
+      const ch=guild.channels.cache.get(g.weatherChannelId)
+        || await guild.channels.fetch(g.weatherChannelId).catch(()=>null);
+      if(!ch?.isTextBased())continue;
 
-    const pages=await buildWeatherPages(g.weatherRegions);
-    for(const page of pages){
-      await ch.send(page).catch(()=>{});
+      const pages=await buildWeatherPages(g.weatherRegions);
+      for(const page of pages){
+        await ch.send(page);
+      }
+
+      g.lastWeatherPostDate=dateKey;
+      saveStore(store);
+    }catch(e){
+      console.error(`weather auto ${guild.id}`,e);
     }
-
-    g.lastWeatherPostDate=dateKey;
-    saveStore(store);
   }
 },15*1000);
 

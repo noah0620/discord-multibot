@@ -3,6 +3,8 @@ import { SlashCommandBuilder, PermissionFlagsBits, ChannelType } from 'discord.j
 export const commandData = [
   new SlashCommandBuilder().setName('help').setDescription('BOTの機能一覧を表示'),
   new SlashCommandBuilder().setName('owner-status').setDescription('BOTオーナー判定を確認'),
+  new SlashCommandBuilder().setName('diagnostics').setDescription('【管理者】BOT権限・設定の動作診断')
+    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
 
   new SlashCommandBuilder().setName('shop-create').setDescription('自分の自動販売機を作成')
     .addStringOption(o=>o.setName('name').setDescription('自動販売機名').setRequired(true))
@@ -30,6 +32,19 @@ export const commandData = [
     .addRoleOption(o=>o.setName('role').setDescription('購入完了後に付与するロール')),
   new SlashCommandBuilder().setName('product-list').setDescription('指定自販機の商品一覧')
     .addIntegerOption(o=>o.setName('shop_id').setDescription('自販機ID').setRequired(true)),
+  new SlashCommandBuilder().setName('product-edit').setDescription('商品・在庫を変更')
+    .addIntegerOption(o=>o.setName('shop_id').setDescription('自販機ID').setRequired(true))
+    .addStringOption(o=>o.setName('product_id').setDescription('商品ID').setRequired(true))
+    .addStringOption(o=>o.setName('name').setDescription('新しい商品名'))
+    .addIntegerOption(o=>o.setName('price').setDescription('新しい価格').setMinValue(0))
+    .addIntegerOption(o=>o.setName('stock').setDescription('新しい在庫（-1=無制限）').setMinValue(-1))
+    .addStringOption(o=>o.setName('description').setDescription('新しい商品説明'))
+    .addStringOption(o=>o.setName('delivery').setDescription('新しい購入完了DM'))
+    .addStringOption(o=>o.setName('delivery_file_url').setDescription('新しい配布ファイルURL'))
+    .addRoleOption(o=>o.setName('role').setDescription('購入後に付与するロール')),
+  new SlashCommandBuilder().setName('product-remove').setDescription('商品を販売停止')
+    .addIntegerOption(o=>o.setName('shop_id').setDescription('自販機ID').setRequired(true))
+    .addStringOption(o=>o.setName('product_id').setDescription('商品ID').setRequired(true)),
   new SlashCommandBuilder().setName('order-list').setDescription('指定自販機の注文一覧')
     .addIntegerOption(o=>o.setName('shop_id').setDescription('自販機ID').setRequired(true)),
   new SlashCommandBuilder().setName('shop-panel').setDescription('販売パネル設置')
