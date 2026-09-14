@@ -1,0 +1,16 @@
+{
+  "guilds": {},
+  "shops": {},
+  "orders": {},
+  "schedules": [],
+  "moderationRules": [],
+  "verificationRequests": {},
+  "nextVerificationRequestId": 1,
+  "tickets": {},
+  "nextTicketId": 1,
+  "nextShopId": 1,
+  "nextOrderId": 1,
+  "nextScheduleId": 1,
+  "nextRuleId": 1,
+  "lastEarthquakeEventId": "6aa7d45de88ee598246bf303"
+}
