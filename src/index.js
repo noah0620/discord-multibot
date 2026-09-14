@@ -7,6 +7,8 @@ import { joinVoiceChannel, createAudioPlayer, createAudioResource, AudioPlayerSt
 import { config, assertConfig, isBotOwner } from './config.js';
 import { loadStore, saveStore, guildData } from './db/store.js';
 import { searchRegionChoices } from './regions.js';
+import { generateGoogleImage, generateGoogleVideo } from './ai/google.js';
+import path from 'node:path';
 
 assertConfig();
 const store = loadStore();
@@ -284,17 +286,31 @@ client.on(Events.InteractionCreate, async interaction => {
       }
 
       if (n === 'play') {
+        const url = interaction.options.getString('url', true);
+
+        if (/(?:youtube\.com\/watch|youtu\.be\/|youtube\.com\/shorts\/)/i.test(url)) {
+          // YouTubeの公式ページURLをDiscordに投稿。
+          // Discord側のネイティブYouTubeプレビュー/プレイヤーで再生する。
+          return interaction.reply({
+            content:`▶️ YouTube動画
+${url}`
+          });
+        }
+
         const vc=interaction.member?.voice?.channel;
-        if(!vc)return interaction.reply({content:'❌ 先にボイスチャンネルへ参加してください。',ephemeral:true});
-        const url=interaction.options.getString('url',true);
-        if(/(?:youtube\.com|youtu\.be)/i.test(url))return interaction.reply({content:'⚠️ この統合版ではYouTubeページURLの音声抽出は未実装です。直接再生可能な音声URLを使用してください。',ephemeral:true});
+        if(!vc)return interaction.reply({content:'❌ 音声URLをVC再生する場合は先にボイスチャンネルへ参加してください。',ephemeral:true});
+
         let s=players.get(interaction.guildId);
         if(!s){
           const connection=joinVoiceChannel({channelId:vc.id,guildId:interaction.guildId,adapterCreator:interaction.guild.voiceAdapterCreator});
           const player=createAudioPlayer();connection.subscribe(player);s={connection,player,queue:[],playing:false,current:null};
           player.on(AudioPlayerStatus.Idle,()=>{s.playing=false;s.current=null;playNext(interaction.guildId).catch(console.error);});players.set(interaction.guildId,s);
         }
-        s.queue.push(url);await interaction.reply(`🎵 キューに追加しました。\n${url}`);if(!s.playing)playNext(interaction.guildId);return;
+        s.queue.push(url);
+        await interaction.reply(`🎵 VCキューに追加しました。
+${url}`);
+        if(!s.playing)playNext(interaction.guildId);
+        return;
       }
       if (n === 'queue') {
         const s=players.get(interaction.guildId);const lines=[];if(s?.current)lines.push(`▶️ ${s.current}`);if(s?.queue?.length)lines.push(...s.queue.map((x,k)=>`${k+1}. ${x}`));
@@ -307,10 +323,62 @@ client.on(Events.InteractionCreate, async interaction => {
       }
 
       if (n === 'ai-image' || n === 'ai-video') {
-        const mode=interaction.options.getString('quality')||config.aiDefaultMode;
-        if(mode==='high'&&!config.aiPaidEnabled)return interaction.reply({content:'🔒 高精度APIは無効です。無料優先モードを使用してください。',ephemeral:true});
-        const kind=n==='ai-image'?'画像':'動画';
-        return interaction.reply({content:`🎨 ${kind}生成 / ${mode}\n${interaction.options.getString('prompt',true)}\n\n現在は生成エンジン接続口まで実装済みです。`,ephemeral:true});
+        const prompt = interaction.options.getString('prompt', true);
+
+        if (!config.googleApiKey) {
+          return interaction.reply({
+            content:'❌ GOOGLE_API_KEY が未設定です。.env / Railway Variables に設定してください。',
+            ephemeral:true
+          });
+        }
+
+        await interaction.deferReply();
+
+        try {
+          const generatedDir = path.resolve(config.dataDir, 'generated');
+
+          if (n === 'ai-image') {
+            const aspect = interaction.options.getString('aspect') || '1:1';
+            const file = await generateGoogleImage({
+              apiKey: config.googleApiKey,
+              model: config.googleImageModel,
+              prompt,
+              outputDir: generatedDir,
+              aspectRatio: aspect,
+              imageSize: '1K'
+            });
+
+            return interaction.editReply({
+              content:`✅ Google AI画像生成完了
+モデル: ${config.googleImageModel}
+比率: ${aspect}
+Prompt: ${prompt}`,
+              files:[file]
+            });
+          }
+
+          const aspect = interaction.options.getString('aspect') || '16:9';
+          const file = await generateGoogleVideo({
+            apiKey: config.googleApiKey,
+            model: config.googleVideoModel,
+            prompt,
+            outputDir: generatedDir,
+            aspectRatio: aspect
+          });
+
+          return interaction.editReply({
+            content:`✅ Google AI動画生成完了
+モデル: ${config.googleVideoModel}
+比率: ${aspect}
+Prompt: ${prompt}`,
+            files:[file]
+          });
+
+        } catch (e) {
+          console.error('Google AI generation error:', e);
+          return interaction.editReply(`❌ Google AI生成に失敗しました。
+${String(e.message || e).slice(0,1500)}`);
+        }
       }
       if (n === 'video') return interaction.reply(`🎬 ${interaction.options.getString('url',true)}`);
     }

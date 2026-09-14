@@ -109,12 +109,16 @@ export const commandData = [
   new SlashCommandBuilder().setName('skip').setDescription('現在曲をスキップ'),
   new SlashCommandBuilder().setName('stop').setDescription('音楽停止'),
 
-  new SlashCommandBuilder().setName('ai-image').setDescription('AI画像生成 free/high')
+  new SlashCommandBuilder().setName('ai-image').setDescription('Google APIでAI画像を生成')
     .addStringOption(o=>o.setName('prompt').setDescription('生成内容').setRequired(true))
-    .addStringOption(o=>o.setName('quality').setDescription('モード').addChoices({name:'無料優先',value:'free'},{name:'高精度API',value:'high'})),
-  new SlashCommandBuilder().setName('ai-video').setDescription('AI動画生成 free/high')
+    .addStringOption(o=>o.setName('aspect').setDescription('画像比率').addChoices(
+      {name:'1:1',value:'1:1'},{name:'16:9',value:'16:9'},{name:'9:16',value:'9:16'}
+    )),
+  new SlashCommandBuilder().setName('ai-video').setDescription('Google Veo APIでAI動画を生成')
     .addStringOption(o=>o.setName('prompt').setDescription('生成内容').setRequired(true))
-    .addStringOption(o=>o.setName('quality').setDescription('モード').addChoices({name:'無料優先',value:'free'},{name:'高精度API',value:'high'})),
+    .addStringOption(o=>o.setName('aspect').setDescription('動画比率').addChoices(
+      {name:'16:9',value:'16:9'},{name:'9:16',value:'9:16'}
+    )),
   new SlashCommandBuilder().setName('video').setDescription('動画URLを投稿')
     .addStringOption(o=>o.setName('url').setDescription('動画URL').setRequired(true))
 ];
