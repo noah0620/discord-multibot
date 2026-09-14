@@ -311,28 +311,56 @@ client.on(Events.InteractionCreate, async interaction => {
 
       if (n === 'help') {
         return interaction.reply({
-          embeds:[new EmbedBuilder().setTitle('🤖 Discord MultiBot v3 統合版').setDescription(
-`🛒 自販機 / PayPay受取リンク
-/shop-create /shop-list /shop-config /product-add /shop-panel
+          embeds:[new EmbedBuilder()
+            .setTitle('🤖 Discord MultiBot v4.1 完全統合版')
+            .setDescription(
+`🛒 **自販機 / PayPay受取リンク**
+/shop-create /shop-list /shop-config
+/product-add /shop-panel
 
-✅ 認証・ロール・チケット
-/verify-panel /role-panel /ticket-panel\n管理者: /verify-admin /verify-status /join-leave-settings /join-leave-status
+✅ **管理者承認型 認証**
+/verify-panel /verify-admin /verify-status
 
-💬 管理
-/autoreply-add /autoreply-remove /guild-settings
+🎭 **ロール選択**
+/role-panel
+
+🚪 **入室・退出通知**
+/join-leave-settings /join-leave-status
+/guild-settings
+
+🎫 **チケット**
+/ticket-panel
+
+💬 **自動返信**
+/autoreply-add /autoreply-remove
+
+🌤 **天気**
+/weather /weather-register /weather-list
+/weather-admin /weather-auto
+
+🚨 **地震速報**
+/earthquake /earthquake-register
+/earthquake-list /earthquake-auto
+
+📅 **予約投稿**
 /schedule-post /schedule-list /schedule-cancel
+
+🛡️ **自動モデレーション**
 /moderation-rule /moderation-list /moderation-remove
 
-🌤 天気
-/weather
-管理者: /weather-register /weather-admin /weather-auto
+🎵 **音楽**
+/play /queue /pause /resume
+/skip /stop /nowplaying /volume
 
-🚨 地震
-/earthquake /earthquake-register /earthquake-list /earthquake-auto
+🎬 **動画URL**
+/video
 
-🎵 音楽
-/play /queue /pause /resume /skip /stop /nowplaying /volume`
-          )],
+👑 **BOTオーナー確認**
+/owner-status
+
+**AI生成機能は搭載していません。**`
+            )
+          ],
           ephemeral:true
         });
       }
@@ -626,6 +654,14 @@ client.on(Events.InteractionCreate, async interaction => {
             ephemeral:true
           });
         }
+      }
+
+      if (n === 'weather-list') {
+        const g=guildData(store,interaction.guildId);
+        return interaction.reply({
+          content:`🔒 **登録済み天気地域**\n地域 (${(g.weatherRegions||[]).length}/47): ${(g.weatherRegions||[]).join(' / ')||'未登録'}\n自動投稿: ${g.weatherAutoEnabled?'ON':'OFF'}\n投稿時刻: ${g.weatherAutoTime || '07:00'}（日本時間）\n投稿先: ${g.weatherChannelId?`<#${g.weatherChannelId}>`:'未設定'}`,
+          ephemeral:true
+        });
       }
 
       if (n === 'weather-admin') {

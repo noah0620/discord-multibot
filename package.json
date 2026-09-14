@@ -1,7 +1,7 @@
 {
   "name": "discord-multibot-v3-merged",
-  "version": "4.0.0",
-  "description": "Discord MultiBot v4.0 - admin approval verification workflow with pending requests and role assignment.",
+  "version": "4.1.0",
+  "description": "Discord MultiBot v4.1 - all legacy non-AI features restored plus admin approval verification.",
   "type": "module",
   "main": "src/index.js",
   "scripts": {

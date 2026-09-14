@@ -77,6 +77,8 @@ export const commandData = [
     .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
   new SlashCommandBuilder().setName('weather-admin').setDescription('【管理者】天気地域登録の詳細を表示')
     .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
+  new SlashCommandBuilder().setName('weather-list').setDescription('【管理者】登録済み天気地域を表示')
+    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
   new SlashCommandBuilder().setName('weather-auto').setDescription('【管理者】サーバーごとの自動天気投稿時刻を設定')
     .addBooleanOption(o=>o.setName('enabled').setDescription('ON/OFF').setRequired(true))
     .addStringOption(o=>o.setName('time').setDescription('毎日の投稿時刻 例: 07:00 / 18:30'))
