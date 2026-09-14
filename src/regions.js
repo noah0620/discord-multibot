@@ -56,3 +56,16 @@ export function searchRegionChoices(input = "") {
 
   return filtered.slice(0, 25);
 }
+
+
+export function searchPrefectureChoices(input = "") {
+  const q = input.trim().toLowerCase();
+  const all = PREFECTURES.map(([pref, capital]) => ({
+    name: `${pref}（${capital}）`,
+    value: pref
+  }));
+  return (q
+    ? all.filter(x => x.name.toLowerCase().includes(q) || x.value.toLowerCase().includes(q))
+    : all
+  ).slice(0, 25);
+}

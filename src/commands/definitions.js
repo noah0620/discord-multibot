@@ -11,14 +11,27 @@ export const commandData = [
   new SlashCommandBuilder().setName('shop-list').setDescription('このサーバーの自動販売機一覧'),
   new SlashCommandBuilder().setName('shop-config').setDescription('自動販売機設定')
     .addIntegerOption(o=>o.setName('shop_id').setDescription('自販機ID').setRequired(true))
+    .addStringOption(o=>o.setName('name').setDescription('新しい自販機名'))
     .addRoleOption(o=>o.setName('manager_role').setDescription('管理ロール'))
     .addChannelOption(o=>o.setName('order_channel').setDescription('注文通知先').addChannelTypes(ChannelType.GuildText)),
+  new SlashCommandBuilder().setName('shop-delete').setDescription('自動販売機を停止')
+    .addIntegerOption(o=>o.setName('shop_id').setDescription('自販機ID').setRequired(true)),
+  new SlashCommandBuilder().setName('shop-admin').setDescription('【管理者】自販機・注文状況を確認')
+    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
+
   new SlashCommandBuilder().setName('product-add').setDescription('自動販売機に商品追加')
     .addIntegerOption(o=>o.setName('shop_id').setDescription('自販機ID').setRequired(true))
     .addStringOption(o=>o.setName('name').setDescription('商品名').setRequired(true))
     .addIntegerOption(o=>o.setName('price').setDescription('単価').setRequired(true).setMinValue(0))
-    .addIntegerOption(o=>o.setName('stock').setDescription('在庫').setRequired(true).setMinValue(0))
-    .addStringOption(o=>o.setName('delivery').setDescription('購入完了後DM内容').setRequired(true)),
+    .addIntegerOption(o=>o.setName('stock').setDescription('在庫（-1=無制限）').setRequired(true).setMinValue(-1))
+    .addStringOption(o=>o.setName('description').setDescription('商品説明'))
+    .addStringOption(o=>o.setName('delivery').setDescription('購入完了後DM内容'))
+    .addStringOption(o=>o.setName('delivery_file_url').setDescription('購入完了後に送るファイルURL'))
+    .addRoleOption(o=>o.setName('role').setDescription('購入完了後に付与するロール')),
+  new SlashCommandBuilder().setName('product-list').setDescription('指定自販機の商品一覧')
+    .addIntegerOption(o=>o.setName('shop_id').setDescription('自販機ID').setRequired(true)),
+  new SlashCommandBuilder().setName('order-list').setDescription('指定自販機の注文一覧')
+    .addIntegerOption(o=>o.setName('shop_id').setDescription('自販機ID').setRequired(true)),
   new SlashCommandBuilder().setName('shop-panel').setDescription('販売パネル設置')
     .addIntegerOption(o=>o.setName('shop_id').setDescription('自販機ID').setRequired(true)),
 
@@ -37,8 +50,8 @@ export const commandData = [
     .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
 
   new SlashCommandBuilder().setName('role-panel').setDescription('最大5ロールの選択パネル')
-    .addRoleOption(o=>o.setName('role1').setDescription('ロール1').setRequired(true))
-    .addStringOption(o=>o.setName('label1').setDescription('表示名1').setRequired(true))
+    .addRoleOption(o=>o.setName('role1').setDescription('ロール1（省略時は保存済みロール）'))
+    .addStringOption(o=>o.setName('label1').setDescription('表示名1'))
     .addRoleOption(o=>o.setName('role2').setDescription('ロール2'))
     .addStringOption(o=>o.setName('label2').setDescription('表示名2'))
     .addRoleOption(o=>o.setName('role3').setDescription('ロール3'))
@@ -48,16 +61,36 @@ export const commandData = [
     .addRoleOption(o=>o.setName('role5').setDescription('ロール5'))
     .addStringOption(o=>o.setName('label5').setDescription('表示名5'))
     .setDefaultMemberPermissions(PermissionFlagsBits.ManageRoles),
+  new SlashCommandBuilder().setName('role-add').setDescription('ロールパネル用ロールを保存')
+    .addStringOption(o=>o.setName('label').setDescription('表示名').setRequired(true))
+    .addRoleOption(o=>o.setName('role').setDescription('ロール').setRequired(true))
+    .setDefaultMemberPermissions(PermissionFlagsBits.ManageRoles),
+  new SlashCommandBuilder().setName('role-list').setDescription('保存済みロール一覧')
+    .setDefaultMemberPermissions(PermissionFlagsBits.ManageRoles),
+  new SlashCommandBuilder().setName('role-remove').setDescription('保存済みロールを削除')
+    .addRoleOption(o=>o.setName('role').setDescription('ロール').setRequired(true))
+    .setDefaultMemberPermissions(PermissionFlagsBits.ManageRoles),
 
   new SlashCommandBuilder().setName('ticket-panel').setDescription('チケット作成パネル')
+    .setDefaultMemberPermissions(PermissionFlagsBits.ManageChannels),
+  new SlashCommandBuilder().setName('ticket-settings').setDescription('チケットカテゴリ・サポートロール設定')
+    .addChannelOption(o=>o.setName('category').setDescription('作成先カテゴリ').addChannelTypes(ChannelType.GuildCategory))
+    .addRoleOption(o=>o.setName('support_role').setDescription('サポートロール'))
+    .setDefaultMemberPermissions(PermissionFlagsBits.ManageChannels),
+  new SlashCommandBuilder().setName('ticket-status').setDescription('チケット設定を確認')
     .setDefaultMemberPermissions(PermissionFlagsBits.ManageChannels),
 
   new SlashCommandBuilder().setName('autoreply-add').setDescription('自動返信追加')
     .addStringOption(o=>o.setName('keyword').setDescription('キーワード').setRequired(true))
     .addStringOption(o=>o.setName('reply').setDescription('返信内容').setRequired(true))
+    .addStringOption(o=>o.setName('mode').setDescription('判定方法').addChoices(
+      {name:'部分一致',value:'contains'},{name:'完全一致',value:'exact'}
+    ))
     .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
   new SlashCommandBuilder().setName('autoreply-remove').setDescription('自動返信削除')
     .addStringOption(o=>o.setName('keyword').setDescription('キーワード').setRequired(true))
+    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
+  new SlashCommandBuilder().setName('autoreply-list').setDescription('登録済み自動返信一覧')
     .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
 
   new SlashCommandBuilder().setName('guild-settings').setDescription('通知先を設定')
@@ -65,6 +98,20 @@ export const commandData = [
     .addChannelOption(o=>o.setName('leave_log').setDescription('退出通知').addChannelTypes(ChannelType.GuildText))
     .addChannelOption(o=>o.setName('earthquake').setDescription('地震通知').addChannelTypes(ChannelType.GuildText))
     .addChannelOption(o=>o.setName('weather').setDescription('天気通知').addChannelTypes(ChannelType.GuildText))
+    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
+  new SlashCommandBuilder().setName('guild-status').setDescription('サーバー通知設定を確認')
+    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
+  new SlashCommandBuilder().setName('setting').setDescription('旧版互換: サーバー共通設定をIDで保存')
+    .addStringOption(o=>o.setName('key').setDescription('設定項目').setRequired(true).addChoices(
+      {name:'認証ロールID',value:'verification_role_id'},
+      {name:'入室チャンネルID',value:'welcome_channel_id'},
+      {name:'退室チャンネルID',value:'leave_channel_id'},
+      {name:'チケットカテゴリID',value:'ticket_category_id'},
+      {name:'サポートロールID',value:'ticket_support_role_id'},
+      {name:'地震チャンネルID',value:'earthquake_channel_id'},
+      {name:'天気チャンネルID',value:'weather_channel_id'}
+    ))
+    .addStringOption(o=>o.setName('value').setDescription('Discord ID').setRequired(true))
     .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
 
   new SlashCommandBuilder().setName('weather').setDescription('登録地域の天気を表示。地域指定も可能')

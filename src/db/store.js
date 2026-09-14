@@ -15,6 +15,8 @@ function initial() {
     moderationRules: [],
     verificationRequests: {},
     nextVerificationRequestId: 1,
+    tickets: {},
+    nextTicketId: 1,
     nextShopId: 1,
     nextOrderId: 1,
     nextScheduleId: 1,
@@ -45,6 +47,9 @@ export function guildData(store, guildId) {
     joinLogChannelId: null,
     leaveLogChannelId: null,
     verificationRoleId: null,
+    ticketCategoryId: null,
+    ticketSupportRoleId: null,
+    roleOptions: [],
     earthquakeChannelId: null,
     weatherChannelId: null,
     autoReplies: {},
@@ -63,7 +68,13 @@ export function guildData(store, guildId) {
   g.minIntensity ??= 3;
   g.weatherRegions ??= [];
   g.earthquakeRegions ??= [];
+  g.autoReplies ??= {};
+  g.ticketCategoryId ??= null;
+  g.ticketSupportRoleId ??= null;
+  g.roleOptions ??= [];
   store.verificationRequests ??= {};
   store.nextVerificationRequestId ??= 1;
+  store.tickets ??= {};
+  store.nextTicketId ??= 1;
   return g;
 }

@@ -6,7 +6,7 @@ import {
 import { joinVoiceChannel, createAudioPlayer, createAudioResource, AudioPlayerStatus } from '@discordjs/voice';
 import { config, assertConfig, isBotOwner } from './config.js';
 import { loadStore, saveStore, guildData } from './db/store.js';
-import { searchRegionChoices, PREFECTURES, WEATHER_AREAS, expandWeatherRegion } from './regions.js';
+import { searchRegionChoices, searchPrefectureChoices, PREFECTURES, WEATHER_AREAS, expandWeatherRegion } from './regions.js';
 import path from 'node:path';
 
 assertConfig();
@@ -275,8 +275,10 @@ client.on(Events.MessageCreate, async msg => {
     return;
   }
 
-  for (const [keyword, reply] of Object.entries(g.autoReplies || {})) {
-    if (msg.content.includes(keyword)) { await msg.reply(reply).catch(()=>{}); break; }
+  for (const [keyword, raw] of Object.entries(g.autoReplies || {})) {
+    const data = typeof raw === 'string' ? { reply:raw, mode:'contains' } : raw;
+    const hit = data.mode === 'exact' ? msg.content === keyword : msg.content.includes(keyword);
+    if (hit) { await msg.reply(data.reply).catch(()=>{}); break; }
   }
 });
 
@@ -303,7 +305,10 @@ function rolePanelProblem(guild, role) {
 client.on(Events.InteractionCreate, async interaction => {
   try {
     if (interaction.isAutocomplete()) {
-      return interaction.respond(searchRegionChoices(interaction.options.getFocused()));
+      const choices = interaction.commandName.startsWith('earthquake')
+        ? searchPrefectureChoices(interaction.options.getFocused())
+        : searchRegionChoices(interaction.options.getFocused());
+      return interaction.respond(choices);
     }
 
     if (interaction.isChatInputCommand()) {
@@ -312,53 +317,47 @@ client.on(Events.InteractionCreate, async interaction => {
       if (n === 'help') {
         return interaction.reply({
           embeds:[new EmbedBuilder()
-            .setTitle('🤖 Discord MultiBot v4.1 完全統合版')
+            .setTitle('🤖 Discord MultiBot v5.0 完全統合版')
             .setDescription(
-`🛒 **自販機 / PayPay受取リンク**
-/shop-create /shop-list /shop-config
-/product-add /shop-panel
+`1. 🛒 **自販機・商品・PayPay購入・在庫・管理者**
+/shop-create /shop-list /shop-config /shop-delete /shop-admin
+/product-add /product-list /order-list /shop-panel
 
-✅ **管理者承認型 認証**
+2. ✅ **管理者承認型認証・認証管理ページ**
 /verify-panel /verify-admin /verify-status
 
-🎭 **ロール選択**
-/role-panel
+3. 🎭 **最大5個のロールパネル**
+/role-panel /role-add /role-list /role-remove
 
-🚪 **入室・退出通知**
-/join-leave-settings /join-leave-status
-/guild-settings
+4. 🚪 **入室・退出通知と設定確認**
+/join-leave-settings /join-leave-status /guild-settings /guild-status /setting
 
-🎫 **チケット**
-/ticket-panel
+5. 🎫 **チケット**
+/ticket-panel /ticket-settings /ticket-status
 
-💬 **自動返信**
-/autoreply-add /autoreply-remove
+6. 💬 **自動返信**
+/autoreply-add /autoreply-remove /autoreply-list
 
-🌤 **天気**
-/weather /weather-register /weather-list
-/weather-admin /weather-auto
-
-🚨 **地震速報**
-/earthquake /earthquake-register
-/earthquake-list /earthquake-auto
-
-📅 **予約投稿**
+7. 📢 **予約投稿・自動削除**
 /schedule-post /schedule-list /schedule-cancel
 
-🛡️ **自動モデレーション**
+8. 🛡️ **モデレーション**
 /moderation-rule /moderation-list /moderation-remove
 
-🎵 **音楽**
-/play /queue /pause /resume
-/skip /stop /nowplaying /volume
+9. 🌤️ **47都道府県・地方・全国・複数地域天気**
+/weather /weather-register /weather-list /weather-admin /weather-auto
 
-🎬 **動画URL**
-/video
+10. 🚨 **天気とは独立した地震速報**
+/earthquake /earthquake-register /earthquake-list /earthquake-auto
 
-👑 **BOTオーナー確認**
+11. 🎵 **VC音楽**
+/play /queue /pause /resume /skip /stop /nowplaying /volume
+
+12. 👑 **BOTオーナー機能**
 /owner-status
 
-**AI生成機能は搭載していません。**`
+補助: /video
+AI生成機能は搭載していません。`
             )
           ],
           ephemeral:true
@@ -372,40 +371,148 @@ client.on(Events.InteractionCreate, async interaction => {
       if (n === 'shop-create') {
         const id = store.nextShopId++;
         const shop = {
-          id, guildId:interaction.guildId, ownerId:interaction.user.id,
+          id,
+          guildId:interaction.guildId,
+          ownerId:interaction.user.id,
           name:interaction.options.getString('name',true),
           managerRoleId:interaction.options.getRole('manager_role')?.id || null,
-          orderChannelId:interaction.options.getChannel('order_channel')?.id || null,
+          orderChannelId:interaction.options.getChannel('order_channel')?.id || interaction.channelId,
+          active:true,
           products:[]
         };
-        store.shops[id]=shop; saveStore(store);
-        return interaction.reply(`✅ 自動販売機 #${id}「${shop.name}」を作成しました。`);
+        store.shops[id]=shop;
+        saveStore(store);
+        return interaction.reply({
+          content:`✅ 自動販売機 #${id}「${shop.name}」を作成しました。\nオーナー: <@${shop.ownerId}>\n注文通知: <#${shop.orderChannelId}>`,
+          ephemeral:true
+        });
       }
+
       if (n === 'shop-list') {
-        const shops = Object.values(store.shops).filter(s=>s.guildId===interaction.guildId);
-        return interaction.reply({content:shops.length?shops.map(s=>`#${s.id} ${s.name} / owner:<@${s.ownerId}>`).join('\n'):'まだありません。',ephemeral:true});
+        const shops = Object.values(store.shops)
+          .filter(s=>s.guildId===interaction.guildId && s.active!==false);
+        return interaction.reply({
+          content:shops.length
+            ? shops.map(s=>`#${s.id} **${s.name}** / owner:<@${s.ownerId}>${s.managerRoleId?` / 管理:<@&${s.managerRoleId}>`:''}`).join('\n')
+            : '自動販売機はまだありません。',
+          ephemeral:true
+        });
       }
+
       if (n === 'shop-config') {
         const shop=store.shops[interaction.options.getInteger('shop_id')];
         if(!shop||shop.guildId!==interaction.guildId)return interaction.reply({content:'❌ 自販機が見つかりません。',ephemeral:true});
         if(!isShopManager(interaction,shop))return interaction.reply({content:'❌ 管理権限がありません。',ephemeral:true});
-        const role=interaction.options.getRole('manager_role'),ch=interaction.options.getChannel('order_channel');
-        if(role)shop.managerRoleId=role.id;if(ch)shop.orderChannelId=ch.id;saveStore(store);
+
+        const name=interaction.options.getString('name');
+        const role=interaction.options.getRole('manager_role');
+        const ch=interaction.options.getChannel('order_channel');
+        if(!name&&!role&&!ch)return interaction.reply({content:'❌ 変更する項目を1つ以上指定してください。',ephemeral:true});
+
+        if(name)shop.name=name.trim();
+        if(role)shop.managerRoleId=role.id;
+        if(ch)shop.orderChannelId=ch.id;
+        saveStore(store);
         return interaction.reply({content:'✅ 自販機設定を更新しました。',ephemeral:true});
       }
+
+      if (n === 'shop-delete') {
+        const shop=store.shops[interaction.options.getInteger('shop_id')];
+        if(!shop||shop.guildId!==interaction.guildId)return interaction.reply({content:'❌ 自販機が見つかりません。',ephemeral:true});
+
+        const allowed = isBotOwner(interaction.user.id)
+          || shop.ownerId===interaction.user.id
+          || interaction.memberPermissions?.has(PermissionFlagsBits.Administrator);
+
+        if(!allowed)return interaction.reply({content:'❌ 自販機停止はオーナー・サーバー管理者・BOTオーナーのみ可能です。',ephemeral:true});
+        shop.active=false;
+        saveStore(store);
+        return interaction.reply({content:`🛑 自販機 #${shop.id}「${shop.name}」を停止しました。`,ephemeral:true});
+      }
+
+      if (n === 'shop-admin') {
+        if(!interaction.memberPermissions?.has(PermissionFlagsBits.ManageGuild) && !isBotOwner(interaction.user.id)){
+          return interaction.reply({content:'❌ 管理者のみ使用できます。',ephemeral:true});
+        }
+        const shops=Object.values(store.shops).filter(s=>s.guildId===interaction.guildId);
+        const orders=Object.values(store.orders).filter(o=>o.guildId===interaction.guildId);
+        const pending=orders.filter(o=>o.status==='pending');
+        const lines=shops.slice(0,25).map(s=>{
+          const pc=(s.products||[]).length;
+          const oc=orders.filter(o=>Number(o.shopId)===Number(s.id)).length;
+          return `#${s.id} ${s.active===false?'🛑':'✅'} **${s.name}** / owner:<@${s.ownerId}> / 商品:${pc} / 注文:${oc}`;
+        });
+        return interaction.reply({
+          content:`🔒 **自販機 管理者ページ**\n自販機: ${shops.length}件 / 注文: ${orders.length}件 / 承認待ち: ${pending.length}件\n\n${lines.join('\n')||'自販機はありません。'}`,
+          ephemeral:true
+        });
+      }
+
       if (n === 'product-add') {
         const shop=store.shops[interaction.options.getInteger('shop_id')];
-        if(!shop||shop.guildId!==interaction.guildId)return interaction.reply({content:'❌ 自販機が見つかりません。',ephemeral:true});
+        if(!shop||shop.guildId!==interaction.guildId||shop.active===false)return interaction.reply({content:'❌ 自販機が見つかりません。',ephemeral:true});
         if(!isShopManager(interaction,shop))return interaction.reply({content:'❌ 管理権限がありません。',ephemeral:true});
-        const p={id:Date.now().toString(36),name:interaction.options.getString('name',true),price:interaction.options.getInteger('price',true),stock:interaction.options.getInteger('stock',true),delivery:interaction.options.getString('delivery',true)};
-        shop.products.push(p);saveStore(store);return interaction.reply({content:`✅ ${p.name} を追加しました。`,ephemeral:true});
+
+        const p={
+          id:Date.now().toString(36),
+          name:interaction.options.getString('name',true),
+          price:interaction.options.getInteger('price',true),
+          stock:interaction.options.getInteger('stock',true),
+          description:interaction.options.getString('description') || '',
+          delivery:interaction.options.getString('delivery') || '',
+          deliveryFileUrl:interaction.options.getString('delivery_file_url') || '',
+          roleId:interaction.options.getRole('role')?.id || null,
+          active:true
+        };
+        shop.products ??= [];
+        shop.products.push(p);
+        saveStore(store);
+        return interaction.reply({content:`✅ ${p.name} を追加しました。商品ID: \`${p.id}\``,ephemeral:true});
       }
-      if (n === 'shop-panel') {
+
+      if (n === 'product-list') {
         const shop=store.shops[interaction.options.getInteger('shop_id')];
         if(!shop||shop.guildId!==interaction.guildId)return interaction.reply({content:'❌ 自販機が見つかりません。',ephemeral:true});
+        if(!isShopManager(interaction,shop))return interaction.reply({content:'❌ 商品一覧を見る権限がありません。',ephemeral:true});
+
+        const products=shop.products||[];
+        const lines=products.map(p=>`\`${p.id}\` ${p.active===false?'🛑':'✅'} **${p.name}** / ¥${Number(p.price).toLocaleString()} / 在庫:${p.stock<0?'∞':p.stock}${p.roleId?` / 付与:<@&${p.roleId}>`:''}`);
+        return interaction.reply({content:lines.join('\n')||'商品はありません。',ephemeral:true});
+      }
+
+      if (n === 'order-list') {
+        const shop=store.shops[interaction.options.getInteger('shop_id')];
+        if(!shop||shop.guildId!==interaction.guildId)return interaction.reply({content:'❌ 自販機が見つかりません。',ephemeral:true});
+        if(!isShopManager(interaction,shop))return interaction.reply({content:'❌ 注文一覧を見る権限がありません。',ephemeral:true});
+
+        const orders=Object.values(store.orders)
+          .filter(o=>Number(o.shopId)===Number(shop.id) && o.guildId===interaction.guildId)
+          .sort((a,b)=>Number(b.id)-Number(a.id))
+          .slice(0,30);
+        const lines=orders.map(o=>`#${o.id} / <@${o.userId}> / x${o.qty} / ¥${Number(o.total).toLocaleString()} / ${o.status}`);
+        return interaction.reply({content:lines.join('\n')||'注文はありません。',ephemeral:true});
+      }
+
+      if (n === 'shop-panel') {
+        const shop=store.shops[interaction.options.getInteger('shop_id')];
+        if(!shop||shop.guildId!==interaction.guildId||shop.active===false)return interaction.reply({content:'❌ 自販機が見つかりません。',ephemeral:true});
         if(!isShopManager(interaction,shop))return interaction.reply({content:'❌ 管理権限がありません。',ephemeral:true});
-        const rows=shop.products.slice(0,5).map(p=>new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId(`buy:${shop.id}:${p.id}`).setLabel(`${p.name} ¥${p.price}`).setStyle(ButtonStyle.Success)));
-        return interaction.reply({embeds:[new EmbedBuilder().setTitle(`🛒 ${shop.name}`).setDescription('購入する商品を選択してください。')],components:rows});
+
+        const products=(shop.products||[]).filter(p=>p.active!==false && p.stock!==0).slice(0,5);
+        if(!products.length)return interaction.reply({content:'❌ 販売可能な商品がありません。',ephemeral:true});
+
+        const rows=products.map(p=>
+          new ActionRowBuilder().addComponents(
+            new ButtonBuilder()
+              .setCustomId(`buy:${shop.id}:${p.id}`)
+              .setLabel(`${p.name} ¥${p.price}${p.stock<0?' / 在庫∞':` / 在庫${p.stock}`}`)
+              .setStyle(ButtonStyle.Success)
+          )
+        );
+        return interaction.reply({
+          embeds:[new EmbedBuilder().setTitle(`🛒 ${shop.name}`).setDescription('購入する商品を選択してください。')],
+          components:rows
+        });
       }
 
       if (n === 'verify-panel') {
@@ -529,64 +636,162 @@ client.on(Events.InteractionCreate, async interaction => {
       if (n === 'role-panel') {
         const buttons=[];
         const errors=[];
+        let directCount=0;
 
         for(let x=1;x<=5;x++){
           const role=interaction.options.getRole(`role${x}`);
           if(!role)continue;
-
+          directCount++;
           const problem=rolePanelProblem(interaction.guild,role);
-          if(problem){
-            errors.push(`• ${role.name}: ${problem}`);
-            continue;
-          }
-
+          if(problem){errors.push(`• ${role.name}: ${problem}`);continue;}
           const label=(interaction.options.getString(`label${x}`)||role.name).slice(0,80);
-          buttons.push(
-            new ButtonBuilder()
-              .setCustomId(`role:${role.id}`)
-              .setLabel(label)
-              .setStyle(ButtonStyle.Secondary)
-          );
+          buttons.push(new ButtonBuilder().setCustomId(`role:${role.id}`).setLabel(label).setStyle(ButtonStyle.Secondary));
         }
 
-        if(errors.length){
-          return interaction.reply({
-            content:`❌ ロールパネルを作成できません。\n\n${errors.join('\n')}\n\n特に、**BOTのロールを配布したいロールより上**に置き、BOTへ **「ロールの管理」** 権限を付けてください。`,
-            ephemeral:true
-          });
+        if(directCount===0){
+          const g=guildData(store,interaction.guildId);
+          for(const opt of (g.roleOptions||[]).slice(0,5)){
+            const role=await interaction.guild.roles.fetch(opt.roleId).catch(()=>null);
+            if(!role)continue;
+            const problem=rolePanelProblem(interaction.guild,role);
+            if(problem){errors.push(`• ${role.name}: ${problem}`);continue;}
+            buttons.push(new ButtonBuilder().setCustomId(`role:${role.id}`).setLabel((opt.label||role.name).slice(0,80)).setStyle(ButtonStyle.Secondary));
+          }
         }
 
-        if(!buttons.length){
-          return interaction.reply({content:'❌ パネルに設定できるロールがありません。',ephemeral:true});
-        }
+        if(errors.length)return interaction.reply({content:`❌ ロールパネルを作成できません。\n${errors.join('\n')}`,ephemeral:true});
+        if(!buttons.length)return interaction.reply({content:'❌ ロールが指定されていません。直接指定するか `/role-add` で保存してください。',ephemeral:true});
 
         return interaction.reply({
-          embeds:[
-            new EmbedBuilder()
-              .setTitle('🎭 ロール選択')
-              .setDescription('下のボタンを押すとロールを付与します。もう一度押すと解除します。')
-          ],
+          embeds:[new EmbedBuilder().setTitle('🎭 ロール選択').setDescription('ボタンを押すとロールを付与します。もう一度押すと解除します。')],
           components:[new ActionRowBuilder().addComponents(buttons)]
         });
       }
 
+      if (n === 'role-add') {
+        const g=guildData(store,interaction.guildId);
+        const role=interaction.options.getRole('role',true);
+        const problem=rolePanelProblem(interaction.guild,role);
+        if(problem)return interaction.reply({content:`❌ ${problem}`,ephemeral:true});
+
+        const label=interaction.options.getString('label',true).slice(0,80);
+        g.roleOptions=(g.roleOptions||[]).filter(x=>x.roleId!==role.id);
+        if(g.roleOptions.length>=5)return interaction.reply({content:'❌ 保存できるロールは最大5個です。先に `/role-remove` で削除してください。',ephemeral:true});
+        g.roleOptions.push({roleId:role.id,label});
+        saveStore(store);
+        return interaction.reply({content:`✅ ${label} → ${role} を保存しました。`,ephemeral:true});
+      }
+
+      if (n === 'role-list') {
+        const g=guildData(store,interaction.guildId);
+        const lines=(g.roleOptions||[]).map((x,i)=>`${i+1}. **${x.label}** → <@&${x.roleId}>`);
+        return interaction.reply({content:lines.join('\n')||'保存済みロールはありません。',ephemeral:true});
+      }
+
+      if (n === 'role-remove') {
+        const g=guildData(store,interaction.guildId);
+        const role=interaction.options.getRole('role',true);
+        const before=(g.roleOptions||[]).length;
+        g.roleOptions=(g.roleOptions||[]).filter(x=>x.roleId!==role.id);
+        saveStore(store);
+        return interaction.reply({content:before!==g.roleOptions.length?'✅ 保存済みロールを削除しました。':'❌ 登録されていません。',ephemeral:true});
+      }
+
       if (n === 'ticket-panel') {
-        return interaction.reply({embeds:[new EmbedBuilder().setTitle('🎫 チケット').setDescription('問い合わせチャンネルを作成します。')],components:[new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId('ticket:create').setLabel('チケット作成').setStyle(ButtonStyle.Primary))]});
+        return interaction.reply({
+          embeds:[new EmbedBuilder().setTitle('🎫 サポートチケット').setDescription('ボタンを押してチケットを作成してください。')],
+          components:[new ActionRowBuilder().addComponents(
+            new ButtonBuilder().setCustomId('ticket:create').setLabel('チケット作成').setStyle(ButtonStyle.Primary)
+          )]
+        });
+      }
+
+      if (n === 'ticket-settings') {
+        const g=guildData(store,interaction.guildId);
+        const category=interaction.options.getChannel('category');
+        const support=interaction.options.getRole('support_role');
+        if(!category&&!support)return interaction.reply({content:'❌ カテゴリまたはサポートロールを指定してください。',ephemeral:true});
+        if(category)g.ticketCategoryId=category.id;
+        if(support)g.ticketSupportRoleId=support.id;
+        saveStore(store);
+        return interaction.reply({
+          content:`✅ チケット設定を保存しました。\nカテゴリ: ${g.ticketCategoryId?`<#${g.ticketCategoryId}>`:'未設定'}\nサポートロール: ${g.ticketSupportRoleId?`<@&${g.ticketSupportRoleId}>`:'未設定'}`,
+          ephemeral:true
+        });
+      }
+
+      if (n === 'ticket-status') {
+        const g=guildData(store,interaction.guildId);
+        return interaction.reply({
+          content:`🔒 **チケット設定**\nカテゴリ: ${g.ticketCategoryId?`<#${g.ticketCategoryId}>`:'未設定'}\nサポートロール: ${g.ticketSupportRoleId?`<@&${g.ticketSupportRoleId}>`:'未設定'}\nオープン: ${Object.values(store.tickets||{}).filter(t=>t.guildId===interaction.guildId&&t.status==='open').length}件`,
+          ephemeral:true
+        });
       }
 
       if (n === 'autoreply-add') {
-        const g=guildData(store,interaction.guildId);g.autoReplies[interaction.options.getString('keyword',true)]=interaction.options.getString('reply',true);saveStore(store);
-        return interaction.reply({content:'✅ 自動返信を追加しました。',ephemeral:true});
+        const g=guildData(store,interaction.guildId);
+        const keyword=interaction.options.getString('keyword',true);
+        const reply=interaction.options.getString('reply',true);
+        const mode=interaction.options.getString('mode') || 'contains';
+        g.autoReplies[keyword]={reply,mode};
+        saveStore(store);
+        return interaction.reply({content:`✅ 自動返信を追加しました。（${mode==='exact'?'完全一致':'部分一致'}）`,ephemeral:true});
       }
+
       if (n === 'autoreply-remove') {
-        const g=guildData(store,interaction.guildId);delete g.autoReplies[interaction.options.getString('keyword',true)];saveStore(store);
+        const g=guildData(store,interaction.guildId);
+        delete g.autoReplies[interaction.options.getString('keyword',true)];
+        saveStore(store);
         return interaction.reply({content:'✅ 自動返信を削除しました。',ephemeral:true});
       }
+
+      if (n === 'autoreply-list') {
+        const g=guildData(store,interaction.guildId);
+        const lines=Object.entries(g.autoReplies||{}).map(([k,v])=>{
+          const data=typeof v==='string'?{reply:v,mode:'contains'}:v;
+          return `• **${k}** [${data.mode==='exact'?'完全':'部分'}] → ${data.reply}`;
+        });
+        return interaction.reply({content:lines.join('\n')||'自動返信はありません。',ephemeral:true});
+      }
+
       if (n === 'guild-settings') {
         const g=guildData(store,interaction.guildId);
-        const j=interaction.options.getChannel('join_log'),l=interaction.options.getChannel('leave_log'),e=interaction.options.getChannel('earthquake'),w=interaction.options.getChannel('weather');
-        if(j)g.joinLogChannelId=j.id;if(l)g.leaveLogChannelId=l.id;if(e)g.earthquakeChannelId=e.id;if(w)g.weatherChannelId=w.id;saveStore(store);
+        const j=interaction.options.getChannel('join_log');
+        const l=interaction.options.getChannel('leave_log');
+        const e=interaction.options.getChannel('earthquake');
+        const w=interaction.options.getChannel('weather');
+        if(j)g.joinLogChannelId=j.id;
+        if(l)g.leaveLogChannelId=l.id;
+        if(e)g.earthquakeChannelId=e.id;
+        if(w)g.weatherChannelId=w.id;
+        saveStore(store);
         return interaction.reply({content:'✅ サーバー設定を保存しました。',ephemeral:true});
+      }
+
+      if (n === 'guild-status') {
+        const g=guildData(store,interaction.guildId);
+        return interaction.reply({
+          content:`🔒 **サーバー設定**\n参加通知: ${g.joinLogChannelId?`<#${g.joinLogChannelId}>`:'未設定'}\n退出通知: ${g.leaveLogChannelId?`<#${g.leaveLogChannelId}>`:'未設定'}\n天気通知: ${g.weatherChannelId?`<#${g.weatherChannelId}>`:'未設定'}\n地震通知: ${g.earthquakeChannelId?`<#${g.earthquakeChannelId}>`:'未設定'}\n認証ロール: ${g.verificationRoleId?`<@&${g.verificationRoleId}>`:'未設定'}\nチケットカテゴリ: ${g.ticketCategoryId?`<#${g.ticketCategoryId}>`:'未設定'}\nサポートロール: ${g.ticketSupportRoleId?`<@&${g.ticketSupportRoleId}>`:'未設定'}`,
+          ephemeral:true
+        });
+      }
+
+      if (n === 'setting') {
+        const g=guildData(store,interaction.guildId);
+        const key=interaction.options.getString('key',true);
+        const value=interaction.options.getString('value',true).trim();
+        const map={
+          verification_role_id:'verificationRoleId',
+          welcome_channel_id:'joinLogChannelId',
+          leave_channel_id:'leaveLogChannelId',
+          ticket_category_id:'ticketCategoryId',
+          ticket_support_role_id:'ticketSupportRoleId',
+          earthquake_channel_id:'earthquakeChannelId',
+          weather_channel_id:'weatherChannelId'
+        };
+        g[map[key]]=value;
+        saveStore(store);
+        return interaction.reply({content:'✅ 旧版互換設定を保存しました。',ephemeral:true});
       }
 
       if (n === 'weather') {
@@ -997,14 +1202,60 @@ ${url}`)],
       }
 
       if (kind === 'ticket' && a === 'create') {
+        const g=guildData(store,interaction.guildId);
+        const overwrites=[
+          {id:interaction.guild.id,deny:[PermissionFlagsBits.ViewChannel]},
+          {id:interaction.user.id,allow:[PermissionFlagsBits.ViewChannel,PermissionFlagsBits.SendMessages,PermissionFlagsBits.ReadMessageHistory]}
+        ];
+        if(g.ticketSupportRoleId){
+          overwrites.push({
+            id:g.ticketSupportRoleId,
+            allow:[PermissionFlagsBits.ViewChannel,PermissionFlagsBits.SendMessages,PermissionFlagsBits.ReadMessageHistory]
+          });
+        }
+
         const ch=await interaction.guild.channels.create({
-          name:`ticket-${interaction.user.username}`.slice(0,90),type:ChannelType.GuildText,
-          permissionOverwrites:[
-            {id:interaction.guild.id,deny:[PermissionFlagsBits.ViewChannel]},
-            {id:interaction.user.id,allow:[PermissionFlagsBits.ViewChannel,PermissionFlagsBits.SendMessages]}
-          ]
+          name:`ticket-${interaction.user.username}`.slice(0,90),
+          type:ChannelType.GuildText,
+          parent:g.ticketCategoryId || undefined,
+          permissionOverwrites:overwrites
+        });
+
+        const ticketId=store.nextTicketId++;
+        store.tickets[ticketId]={
+          id:ticketId,guildId:interaction.guildId,channelId:ch.id,userId:interaction.user.id,
+          status:'open',createdAt:new Date().toISOString()
+        };
+        saveStore(store);
+
+        await ch.send({
+          content:`<@${interaction.user.id}>`,
+          embeds:[new EmbedBuilder().setTitle(`🎫 チケット #${ticketId}`).setDescription('サポート内容を送信してください。')],
+          components:[new ActionRowBuilder().addComponents(
+            new ButtonBuilder().setCustomId(`ticketclose:${ticketId}`).setLabel('チケットを閉じる').setStyle(ButtonStyle.Danger)
+          )]
         });
         return interaction.reply({content:`✅ ${ch} を作成しました。`,ephemeral:true});
+      }
+
+      if (kind === 'ticketclose') {
+        const ticket=store.tickets?.[a];
+        if(!ticket||ticket.guildId!==interaction.guildId)return interaction.reply({content:'❌ チケット情報がありません。',ephemeral:true});
+
+        const g=guildData(store,interaction.guildId);
+        const canClose =
+          interaction.user.id===ticket.userId ||
+          interaction.memberPermissions?.has(PermissionFlagsBits.ManageChannels) ||
+          isBotOwner(interaction.user.id) ||
+          Boolean(g.ticketSupportRoleId && interaction.member?.roles?.cache?.has(g.ticketSupportRoleId));
+
+        if(!canClose)return interaction.reply({content:'❌ チケットを閉じる権限がありません。',ephemeral:true});
+        ticket.status='closed';
+        ticket.closedAt=new Date().toISOString();
+        saveStore(store);
+        await interaction.reply('🔒 チケットを閉じます。');
+        setTimeout(()=>interaction.channel?.delete('チケット終了').catch(()=>{}),1500);
+        return;
       }
       if (kind === 'buy') {
         const shop=store.shops[a],product=shop?.products?.find(p=>p.id===b);
@@ -1020,9 +1271,32 @@ ${url}`)],
         const shop=store.shops[order.shopId];if(!isShopManager(interaction,shop))return interaction.reply({content:'❌ 管理権限がありません。',ephemeral:true});
         if(b==='complete'){
           if(order.status==='completed')return interaction.reply({content:'処理済みです。',ephemeral:true});
-          const p=shop.products.find(x=>x.id===order.productId);if(!p||p.stock<order.qty)return interaction.reply({content:'❌ 在庫不足です。',ephemeral:true});
-          p.stock-=order.qty;order.status='completed';saveStore(store);
-          const user=await client.users.fetch(order.userId);await user.send(`✅ 注文 #${order.id} 完了\n商品: ${p.name} × ${order.qty}\n\n${p.delivery}`).catch(()=>{});
+          const p=shop.products.find(x=>x.id===order.productId);
+          if(!p)return interaction.reply({content:'❌ 商品が見つかりません。',ephemeral:true});
+          if(p.stock>=0 && p.stock<order.qty)return interaction.reply({content:'❌ 在庫不足です。',ephemeral:true});
+
+          if(p.stock>=0)p.stock-=order.qty;
+          order.status='completed';
+          order.completedAt=new Date().toISOString();
+          saveStore(store);
+
+          const user=await client.users.fetch(order.userId).catch(()=>null);
+          const dm=[
+            `✅ 注文 #${order.id} 完了`,
+            `商品: ${p.name} × ${order.qty}`,
+            p.delivery ? `\n${p.delivery}` : '',
+            p.deliveryFileUrl ? `\nファイル: ${p.deliveryFileUrl}` : ''
+          ].join('\n');
+          await user?.send(dm).catch(()=>{});
+
+          if(p.roleId){
+            const member=await interaction.guild.members.fetch(order.userId).catch(()=>null);
+            const role=await interaction.guild.roles.fetch(p.roleId).catch(()=>null);
+            if(member&&role&&!rolePanelProblem(interaction.guild,role)){
+              await member.roles.add(role,`購入商品 ${p.name} の特典ロール`).catch(()=>{});
+            }
+          }
+
           return interaction.reply('✅ 受け取り完了・商品配布しました。');
         }
         if(b==='reject'){order.status='rejected';saveStore(store);return interaction.reply('❌ 注文を却下しました。');}
@@ -1034,7 +1308,7 @@ ${url}`)],
       if(!shop||!p)return interaction.reply({content:'❌ 商品が見つかりません。',ephemeral:true});
       const qty=Number(interaction.fields.getTextInputValue('qty')),paypay=interaction.fields.getTextInputValue('paypay').trim();
       if(!Number.isInteger(qty)||qty<1)return interaction.reply({content:'❌ 数量が不正です。',ephemeral:true});
-      if(qty>p.stock)return interaction.reply({content:`❌ 在庫不足です。現在 ${p.stock} 個です。`,ephemeral:true});
+      if(p.stock>=0 && qty>p.stock)return interaction.reply({content:`❌ 在庫不足です。現在 ${p.stock} 個です。`,ephemeral:true});
       if(!paypay.startsWith('https://pay.paypay.ne.jp/'))return interaction.reply({content:'❌ PayPay受け取りURLを入力してください。',ephemeral:true});
       const id=store.nextOrderId++,order={id,guildId:interaction.guildId,shopId:Number(shopId),productId,userId:interaction.user.id,qty,total:p.price*qty,paypay,status:'pending',createdAt:new Date().toISOString()};
       store.orders[id]=order;saveStore(store);

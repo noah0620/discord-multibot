@@ -1,7 +1,7 @@
 {
-  "name": "discord-multibot-v3-merged",
-  "version": "4.1.0",
-  "description": "Discord MultiBot v4.1 - all legacy non-AI features restored plus admin approval verification.",
+  "name": "discord-multibot-v5-complete-no-ai",
+  "version": "5.0.0",
+  "description": "Discord MultiBot v5.0 complete integrated edition with all non-AI features.",
   "type": "module",
   "main": "src/index.js",
   "scripts": {
