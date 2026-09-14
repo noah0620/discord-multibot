@@ -7,7 +7,6 @@ import { joinVoiceChannel, createAudioPlayer, createAudioResource, AudioPlayerSt
 import { config, assertConfig, isBotOwner } from './config.js';
 import { loadStore, saveStore, guildData } from './db/store.js';
 import { searchRegionChoices } from './regions.js';
-import { generateGoogleImage, generateGoogleVideo } from './ai/google.js';
 import path from 'node:path';
 
 assertConfig();
@@ -137,10 +136,7 @@ client.on(Events.InteractionCreate, async interaction => {
 /earthquake /earthquake-register /earthquake-list /earthquake-auto
 
 🎵 音楽
-/play /queue /skip /stop
-
-🎨 AI
-/ai-image /ai-video
+/play /queue /pause /resume /skip /stop /nowplaying /volume
 
 ※ 無料優先。high APIは管理者が許可した場合のみ。`
           )],
@@ -286,30 +282,43 @@ client.on(Events.InteractionCreate, async interaction => {
       }
 
       if (n === 'play') {
-        const url = interaction.options.getString('url', true);
+        const url=interaction.options.getString('url',true);
 
         if (/(?:youtube\.com\/watch|youtu\.be\/|youtube\.com\/shorts\/)/i.test(url)) {
-          // YouTubeの公式ページURLをDiscordに投稿。
-          // Discord側のネイティブYouTubeプレビュー/プレイヤーで再生する。
-          return interaction.reply({
-            content:`▶️ YouTube動画
-${url}`
-          });
+          return interaction.reply(`▶️ YouTube動画
+${url}
+
+※ YouTube URLはDiscord内プレビュー再生です。`);
         }
 
         const vc=interaction.member?.voice?.channel;
-        if(!vc)return interaction.reply({content:'❌ 音声URLをVC再生する場合は先にボイスチャンネルへ参加してください。',ephemeral:true});
+        if(!vc)return interaction.reply({content:'❌ 先にボイスチャンネルへ参加してください。',ephemeral:true});
 
         let s=players.get(interaction.guildId);
         if(!s){
           const connection=joinVoiceChannel({channelId:vc.id,guildId:interaction.guildId,adapterCreator:interaction.guild.voiceAdapterCreator});
-          const player=createAudioPlayer();connection.subscribe(player);s={connection,player,queue:[],playing:false,current:null};
-          player.on(AudioPlayerStatus.Idle,()=>{s.playing=false;s.current=null;playNext(interaction.guildId).catch(console.error);});players.set(interaction.guildId,s);
+          const player=createAudioPlayer();
+          connection.subscribe(player);
+          s={connection,player,queue:[],playing:false,current:null,volume:100};
+          player.on(AudioPlayerStatus.Idle,()=>{s.playing=false;s.current=null;playNext(interaction.guildId).catch(console.error);});
+          players.set(interaction.guildId,s);
         }
+
         s.queue.push(url);
-        await interaction.reply(`🎵 VCキューに追加しました。
-${url}`);
-        if(!s.playing)playNext(interaction.guildId);
+
+        const controls=new ActionRowBuilder().addComponents(
+          new ButtonBuilder().setCustomId('music:pause').setLabel('⏸ 一時停止').setStyle(ButtonStyle.Secondary),
+          new ButtonBuilder().setCustomId('music:resume').setLabel('▶ 再開').setStyle(ButtonStyle.Success),
+          new ButtonBuilder().setCustomId('music:skip').setLabel('⏭ スキップ').setStyle(ButtonStyle.Primary),
+          new ButtonBuilder().setCustomId('music:stop').setLabel('⏹ 停止').setStyle(ButtonStyle.Danger)
+        );
+
+        await interaction.reply({
+          embeds:[new EmbedBuilder().setTitle('🎵 Music Player').setDescription(`キューに追加しました。
+${url}`)],
+          components:[controls]
+        });
+        if(!s.playing)playNext(interaction.guildId).catch(console.error);
         return;
       }
       if (n === 'queue') {
@@ -321,64 +330,29 @@ ${url}`);
         const s=players.get(interaction.guildId);if(s){s.queue.length=0;s.player.stop(true);s.connection.destroy();players.delete(interaction.guildId);}
         return interaction.reply('⏹️ 停止しました。');
       }
-
-      if (n === 'ai-image' || n === 'ai-video') {
-        const prompt = interaction.options.getString('prompt', true);
-
-        if (!config.googleApiKey) {
-          return interaction.reply({
-            content:'❌ GOOGLE_API_KEY が未設定です。.env / Railway Variables に設定してください。',
-            ephemeral:true
-          });
-        }
-
-        await interaction.deferReply();
-
-        try {
-          const generatedDir = path.resolve(config.dataDir, 'generated');
-
-          if (n === 'ai-image') {
-            const aspect = interaction.options.getString('aspect') || '1:1';
-            const file = await generateGoogleImage({
-              apiKey: config.googleApiKey,
-              model: config.googleImageModel,
-              prompt,
-              outputDir: generatedDir,
-              aspectRatio: aspect,
-              imageSize: '1K'
-            });
-
-            return interaction.editReply({
-              content:`✅ Google AI画像生成完了
-モデル: ${config.googleImageModel}
-比率: ${aspect}
-Prompt: ${prompt}`,
-              files:[file]
-            });
-          }
-
-          const aspect = interaction.options.getString('aspect') || '16:9';
-          const file = await generateGoogleVideo({
-            apiKey: config.googleApiKey,
-            model: config.googleVideoModel,
-            prompt,
-            outputDir: generatedDir,
-            aspectRatio: aspect
-          });
-
-          return interaction.editReply({
-            content:`✅ Google AI動画生成完了
-モデル: ${config.googleVideoModel}
-比率: ${aspect}
-Prompt: ${prompt}`,
-            files:[file]
-          });
-
-        } catch (e) {
-          console.error('Google AI generation error:', e);
-          return interaction.editReply(`❌ Google AI生成に失敗しました。
-${String(e.message || e).slice(0,1500)}`);
-        }
+      if (n === 'pause') {
+        const s=players.get(interaction.guildId);
+        if(!s)return interaction.reply({content:'再生中の音楽はありません。',ephemeral:true});
+        s.player.pause();
+        return interaction.reply('⏸️ 一時停止しました。');
+      }
+      if (n === 'resume') {
+        const s=players.get(interaction.guildId);
+        if(!s)return interaction.reply({content:'再生中の音楽はありません。',ephemeral:true});
+        s.player.unpause();
+        return interaction.reply('▶️ 再開しました。');
+      }
+      if (n === 'nowplaying') {
+        const s=players.get(interaction.guildId);
+        return interaction.reply(s?.current ? `🎵 現在再生中\n${s.current}` : '現在再生中の音楽はありません。');
+      }
+      if (n === 'volume') {
+        const s=players.get(interaction.guildId);
+        if(!s)return interaction.reply({content:'再生中の音楽はありません。',ephemeral:true});
+        const v=interaction.options.getInteger('percent',true);
+        s.volume=v;
+        s.player.state.resource?.volume?.setVolume(v/100);
+        return interaction.reply(`🔊 音量を ${v}% に変更しました。`);
       }
       if (n === 'video') return interaction.reply(`🎬 ${interaction.options.getString('url',true)}`);
     }
@@ -396,6 +370,23 @@ ${String(e.message || e).slice(0,1500)}`);
         if(has)await interaction.member.roles.remove(a);else await interaction.member.roles.add(a);
         return interaction.reply({content:has?'✅ ロールを外しました。':'✅ ロールを付与しました。',ephemeral:true});
       }
+      if (kind === 'music') {
+        const s=players.get(interaction.guildId);
+        if(a==='stop'){
+          if(s){
+            s.queue.length=0;
+            s.player.stop(true);
+            try{s.connection.destroy();}catch{}
+            players.delete(interaction.guildId);
+          }
+          return interaction.reply({content:'⏹️ 再生を停止しました。',ephemeral:true});
+        }
+        if(!s)return interaction.reply({content:'現在再生中の音楽はありません。',ephemeral:true});
+        if(a==='pause'){s.player.pause();return interaction.reply({content:'⏸️ 一時停止しました。',ephemeral:true});}
+        if(a==='resume'){s.player.unpause();return interaction.reply({content:'▶️ 再開しました。',ephemeral:true});}
+        if(a==='skip'){s.player.stop(true);return interaction.reply({content:'⏭️ スキップしました。',ephemeral:true});}
+      }
+
       if (kind === 'ticket' && a === 'create') {
         const ch=await interaction.guild.channels.create({
           name:`ticket-${interaction.user.username}`.slice(0,90),type:ChannelType.GuildText,
@@ -463,7 +454,7 @@ ${String(e.message || e).slice(0,1500)}`);
 async function playNext(gid){
   const s=players.get(gid);if(!s||s.playing||!s.queue.length)return;
   const url=s.queue.shift();
-  try{s.current=url;s.playing=true;s.player.play(createAudioResource(url));}
+  try{s.current=url;s.playing=true;const resource=createAudioResource(url,{inlineVolume:true});resource.volume?.setVolume((s.volume??100)/100);s.player.play(resource);}
   catch(e){s.current=null;s.playing=false;console.error(e);return playNext(gid);}
 }
 

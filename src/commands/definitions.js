@@ -108,17 +108,12 @@ export const commandData = [
   new SlashCommandBuilder().setName('queue').setDescription('音楽キュー'),
   new SlashCommandBuilder().setName('skip').setDescription('現在曲をスキップ'),
   new SlashCommandBuilder().setName('stop').setDescription('音楽停止'),
+  new SlashCommandBuilder().setName('pause').setDescription('音楽を一時停止'),
+  new SlashCommandBuilder().setName('resume').setDescription('音楽を再開'),
+  new SlashCommandBuilder().setName('nowplaying').setDescription('現在再生中を表示'),
+  new SlashCommandBuilder().setName('volume').setDescription('音量を変更')
+    .addIntegerOption(o=>o.setName('percent').setDescription('音量 1〜200').setRequired(true).setMinValue(1).setMaxValue(200)),
 
-  new SlashCommandBuilder().setName('ai-image').setDescription('Google APIでAI画像を生成')
-    .addStringOption(o=>o.setName('prompt').setDescription('生成内容').setRequired(true))
-    .addStringOption(o=>o.setName('aspect').setDescription('画像比率').addChoices(
-      {name:'1:1',value:'1:1'},{name:'16:9',value:'16:9'},{name:'9:16',value:'9:16'}
-    )),
-  new SlashCommandBuilder().setName('ai-video').setDescription('Google Veo APIでAI動画を生成')
-    .addStringOption(o=>o.setName('prompt').setDescription('生成内容').setRequired(true))
-    .addStringOption(o=>o.setName('aspect').setDescription('動画比率').addChoices(
-      {name:'16:9',value:'16:9'},{name:'9:16',value:'9:16'}
-    )),
   new SlashCommandBuilder().setName('video').setDescription('動画URLを投稿')
     .addStringOption(o=>o.setName('url').setDescription('動画URL').setRequired(true))
 ];

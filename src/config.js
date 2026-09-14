@@ -5,12 +5,6 @@ export const config = {
   clientId: process.env.DISCORD_CLIENT_ID?.trim(),
   ownerIds: (process.env.BOT_OWNER_IDS || '').split(',').map(v => v.trim()).filter(Boolean),
   dataDir: process.env.DATA_DIR?.trim() || './data',
-  aiDefaultMode: process.env.AI_DEFAULT_MODE?.trim() || 'free',
-  aiPaidEnabled: process.env.AI_PAID_API_ENABLED === 'true',
-  openaiApiKey: process.env.OPENAI_API_KEY?.trim() || null,
-  googleApiKey: process.env.GOOGLE_API_KEY?.trim() || null,
-  googleImageModel: process.env.GOOGLE_IMAGE_MODEL?.trim() || 'gemini-3.1-flash-image',
-  googleVideoModel: process.env.GOOGLE_VIDEO_MODEL?.trim() || 'veo-3.1-generate-preview',
   earthquakePollSeconds: Math.max(30, Number(process.env.EARTHQUAKE_POLL_SECONDS || 60)),
   weatherDailyHour: Math.min(23, Math.max(0, Number(process.env.WEATHER_DAILY_HOUR || 7)))
 };

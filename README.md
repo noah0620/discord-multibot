@@ -1,86 +1,52 @@
-# Discord MultiBot v3.3 — Google AI専用版
+# Discord MultiBot v3.4 — AI完全削除版
 
-v3統合版を次の方針へ変更した版です。
+これまでの統合機能を残したまま、AI関連を完全削除し、音楽再生の操作ボタンを追加した版です。
 
-## 変更点
-- ComfyUI / ローカルAIを削除
-- AI画像生成は Google Gemini API のみ
-- AI動画生成は Google Veo API のみ
-- `/ai-image` で生成画像をDiscordへ添付
-- `/ai-video` で生成動画をDiscordへ添付
-- `/play` にYouTube URLを入れた場合、DiscordのYouTubeネイティブプレビューとして投稿
-- 直接再生可能な音声URLは従来どおりVC再生
+## 継続機能
+自販機 / PayPay受取リンク / 在庫 / 商品DM / 認証 / ロール選択 / チケット /
+自動返信 / 参加退出ログ / 天気 / 自動天気投稿 / 地震 / 自動地震速報 /
+予約投稿 / 投稿後削除 / 指定語句の削除・timeout・Kick・BAN / 音楽キュー / 動画URL投稿
 
-## Google API設定
+## 削除
+- /ai-image
+- /ai-video
+- Google Gemini / Veo
+- ComfyUI
+- AI用APIキーとAI依存パッケージ
 
-`.env`
+## 音楽
+直接再生可能な音声URL:
+`/play url:https://example.com/song.mp3`
 
-```env
-DISCORD_TOKEN=新しいBOTトークン
-DISCORD_CLIENT_ID=Application ID
-BOT_OWNER_IDS=自分のDiscordユーザーID
+再生パネル:
+- ⏸ 一時停止
+- ▶ 再開
+- ⏭ スキップ
+- ⏹ 停止
 
-GOOGLE_API_KEY=Google AI Studioで作成したAPIキー
-GOOGLE_IMAGE_MODEL=gemini-3.1-flash-image
-GOOGLE_VIDEO_MODEL=veo-3.1-generate-preview
+停止ボタンはキューを空にし、再生停止後にVCから退出します。
 
-DATA_DIR=./data
-```
+コマンド:
+`/pause` `/resume` `/skip` `/stop` `/queue` `/nowplaying` `/volume`
 
-## インストール
+YouTube URLはDiscord内のYouTubeプレビューとして投稿します。YouTube音声抽出は含みません。
 
+## 初期設定
 ```powershell
-cd C:\NoahXJP-site\Discord\discord-multibot-v3.3-google-only
+cd C:\NoahXJP-site\Discord\discord-multibot-v3.4-no-ai
 npm install
+Copy-Item .env.example .env
+notepad .env
 npm run deploy-commands
 npm start
 ```
 
-## Discordで画像生成
-
-```text
-/ai-image prompt: 赤い髪のアニメ風キャラクター、夜の東京 aspect: 1:1
+`.env`
+```env
+DISCORD_TOKEN=新しいBOTトークン
+DISCORD_CLIENT_ID=Application ID
+BOT_OWNER_IDS=自分のDiscordユーザーID
+DATA_DIR=./data
+EARTHQUAKE_POLL_SECONDS=60
+WEATHER_DAILY_HOUR=7
 ```
-
-Google API → 画像生成 → BOTが画像を取得 → Discord添付、まで自動です。
-
-## Discordで動画生成
-
-```text
-/ai-video prompt: 夜の東京を走る未来的な電車 aspect: 16:9
-```
-
-Google Veoの生成完了をBOTが待ち、完成MP4をDiscordへ添付します。
-
-## YouTube
-
-```text
-/play url:https://www.youtube.com/watch?v=...
-```
-
-YouTube URLの場合はDiscordメッセージへURLを投稿し、Discordが提供するYouTubeプレビュー/プレイヤーで再生します。
-
-### VCでYouTube音声を流す機能について
-
-YouTube公式APIは、Discord VCへYouTube動画から音声ストリームを抽出するためのAPIではありません。
-そのため、この版ではYouTubeページから音声を抜き出してVCへ流す実装は入れていません。
-
-YouTube以外の「直接再生可能な音声URL」は従来どおり `/play` でVC再生できます。
-
-## Railway
-
-Variables:
-- DISCORD_TOKEN
-- DISCORD_CLIENT_ID
-- BOT_OWNER_IDS
-- GOOGLE_API_KEY
-- GOOGLE_IMAGE_MODEL=gemini-3.1-flash-image
-- GOOGLE_VIDEO_MODEL=veo-3.1-generate-preview
-- DATA_DIR=/app/data
-
-永続保存する場合はVolumeを `/app/data` にマウントしてください。
-
-## 注意
-
-Googleの画像生成・動画生成モデルは利用量に応じて料金が発生する場合があります。
-APIキーはGitHubへアップロードせず、`.env` またはRailway Variablesだけに保存してください。
