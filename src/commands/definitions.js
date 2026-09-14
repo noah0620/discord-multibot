@@ -22,8 +22,18 @@ export const commandData = [
   new SlashCommandBuilder().setName('shop-panel').setDescription('販売パネル設置')
     .addIntegerOption(o=>o.setName('shop_id').setDescription('自販機ID').setRequired(true)),
 
-  new SlashCommandBuilder().setName('verify-panel').setDescription('認証パネル')
-    .addRoleOption(o=>o.setName('role').setDescription('認証後付与ロール').setRequired(true))
+  new SlashCommandBuilder().setName('verify-panel').setDescription('認証パネルを設置')
+    .addRoleOption(o=>o.setName('role').setDescription('認証後に付与するロール').setRequired(true))
+    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
+  new SlashCommandBuilder().setName('verify-admin').setDescription('【管理者】認証申請を確認・承認')
+    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
+  new SlashCommandBuilder().setName('verify-status').setDescription('【管理者】認証パネル設定を確認')
+    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
+  new SlashCommandBuilder().setName('join-leave-settings').setDescription('【管理者】入退室通知チャンネルを設定')
+    .addChannelOption(o=>o.setName('join').setDescription('参加通知チャンネル').addChannelTypes(ChannelType.GuildText))
+    .addChannelOption(o=>o.setName('leave').setDescription('退出通知チャンネル').addChannelTypes(ChannelType.GuildText))
+    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
+  new SlashCommandBuilder().setName('join-leave-status').setDescription('【管理者】入退室通知設定を確認')
     .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
 
   new SlashCommandBuilder().setName('role-panel').setDescription('最大5ロールの選択パネル')

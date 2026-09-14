@@ -13,6 +13,8 @@ function initial() {
     orders: {},
     schedules: [],
     moderationRules: [],
+    verificationRequests: {},
+    nextVerificationRequestId: 1,
     nextShopId: 1,
     nextOrderId: 1,
     nextScheduleId: 1,
@@ -61,5 +63,7 @@ export function guildData(store, guildId) {
   g.minIntensity ??= 3;
   g.weatherRegions ??= [];
   g.earthquakeRegions ??= [];
+  store.verificationRequests ??= {};
+  store.nextVerificationRequestId ??= 1;
   return g;
 }

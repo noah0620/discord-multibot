@@ -1,7 +1,7 @@
 {
   "name": "discord-multibot-v3-merged",
-  "version": "3.7.0",
-  "description": "Discord MultiBot v3.7 - all 47 prefectures, regional weather groups, multi-region display, private admin weather page.",
+  "version": "4.0.0",
+  "description": "Discord MultiBot v4.0 - admin approval verification workflow with pending requests and role assignment.",
   "type": "module",
   "main": "src/index.js",
   "scripts": {

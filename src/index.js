@@ -220,11 +220,44 @@ client.once(Events.ClientReady, c => {
 
 client.on(Events.GuildMemberAdd, async member => {
   const g = guildData(store, member.guild.id);
-  if (g.joinLogChannelId) member.guild.channels.cache.get(g.joinLogChannelId)?.send(`📥 ${member.user.tag} が参加しました。`).catch(()=>{});
+  if (!g.joinLogChannelId) return;
+
+  const ch = member.guild.channels.cache.get(g.joinLogChannelId)
+    || await member.guild.channels.fetch(g.joinLogChannelId).catch(()=>null);
+  if (!ch?.isTextBased()) return;
+
+  const embed = new EmbedBuilder()
+    .setTitle('📥 メンバー参加')
+    .setDescription(`${member} がサーバーに参加しました。`)
+    .addFields(
+      {name:'ユーザー', value:`${member.user.tag}`, inline:true},
+      {name:'メンバー数', value:String(member.guild.memberCount), inline:true}
+    )
+    .setThumbnail(member.user.displayAvatarURL())
+    .setTimestamp();
+
+  await ch.send({embeds:[embed]}).catch(e=>console.error('join log error',e));
 });
+
 client.on(Events.GuildMemberRemove, async member => {
   const g = guildData(store, member.guild.id);
-  if (g.leaveLogChannelId) member.guild.channels.cache.get(g.leaveLogChannelId)?.send(`📤 ${member.user.tag} が退出しました。`).catch(()=>{});
+  if (!g.leaveLogChannelId) return;
+
+  const ch = member.guild.channels.cache.get(g.leaveLogChannelId)
+    || await member.guild.channels.fetch(g.leaveLogChannelId).catch(()=>null);
+  if (!ch?.isTextBased()) return;
+
+  const embed = new EmbedBuilder()
+    .setTitle('📤 メンバー退出')
+    .setDescription(`**${member.user.tag}** がサーバーから退出しました。`)
+    .addFields(
+      {name:'ユーザーID', value:member.user.id, inline:true},
+      {name:'メンバー数', value:String(member.guild.memberCount), inline:true}
+    )
+    .setThumbnail(member.user.displayAvatarURL())
+    .setTimestamp();
+
+  await ch.send({embeds:[embed]}).catch(e=>console.error('leave log error',e));
 });
 
 client.on(Events.MessageCreate, async msg => {
@@ -247,6 +280,26 @@ client.on(Events.MessageCreate, async msg => {
   }
 });
 
+
+function rolePanelProblem(guild, role) {
+  if (!guild || !role) return 'ロール情報を取得できません。';
+  if (role.id === guild.id) return '@everyone は選択できません。';
+  if (role.managed) return '連携サービス・BOT管理ロールは付与/解除できません。';
+
+  const me = guild.members.me;
+  if (!me) return 'BOT自身のサーバー情報を取得できません。';
+
+  if (!me.permissions.has(PermissionFlagsBits.ManageRoles)) {
+    return 'BOTに「ロールの管理」権限がありません。';
+  }
+
+  if (role.position >= me.roles.highest.position) {
+    return `BOTのロールより「${role.name}」が上にあります。サーバー設定 → ロール でBOTのロールを対象ロールより上へ移動してください。`;
+  }
+
+  return null;
+}
+
 client.on(Events.InteractionCreate, async interaction => {
   try {
     if (interaction.isAutocomplete()) {
@@ -263,7 +316,7 @@ client.on(Events.InteractionCreate, async interaction => {
 /shop-create /shop-list /shop-config /product-add /shop-panel
 
 ✅ 認証・ロール・チケット
-/verify-panel /role-panel /ticket-panel
+/verify-panel /role-panel /ticket-panel\n管理者: /verify-admin /verify-status /join-leave-settings /join-leave-status
 
 💬 管理
 /autoreply-add /autoreply-remove /guild-settings
@@ -328,19 +381,165 @@ client.on(Events.InteractionCreate, async interaction => {
       }
 
       if (n === 'verify-panel') {
-        const role=interaction.options.getRole('role',true);guildData(store,interaction.guildId).verificationRoleId=role.id;saveStore(store);
-        return interaction.reply({embeds:[new EmbedBuilder().setTitle('✅ 認証').setDescription('ボタンを押して認証してください。')],components:[new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId('verify').setLabel('認証する').setStyle(ButtonStyle.Primary))]});
+        const role=interaction.options.getRole('role',true);
+        const problem=rolePanelProblem(interaction.guild,role);
+        if(problem){
+          return interaction.reply({
+            content:`❌ 認証ロールを設定できません。\n${problem}`,
+            ephemeral:true
+          });
+        }
+
+        const g=guildData(store,interaction.guildId);
+        g.verificationRoleId=role.id;
+        saveStore(store);
+
+        return interaction.reply({
+          embeds:[
+            new EmbedBuilder()
+              .setTitle('✅ 認証申請')
+              .setDescription('下の **認証を申請する** ボタンを押してください。\n\n管理者が申請内容を確認して承認すると、認証ロールが付与されます。')
+              .addFields({name:'承認後のロール',value:`<@&${role.id}>`})
+          ],
+          components:[
+            new ActionRowBuilder().addComponents(
+              new ButtonBuilder()
+                .setCustomId('verify')
+                .setLabel('認証を申請する')
+                .setEmoji('✅')
+                .setStyle(ButtonStyle.Primary)
+            )
+          ]
+        });
+      }
+
+      if (n === 'verify-admin') {
+        const pending=Object.values(store.verificationRequests || {})
+          .filter(r=>r.guildId===interaction.guildId && r.status==='pending')
+          .sort((a,b)=>a.createdAt.localeCompare(b.createdAt));
+
+        if(!pending.length){
+          return interaction.reply({
+            content:'🔒 **認証管理者ページ**\n現在、承認待ちの認証申請はありません。',
+            ephemeral:true
+          });
+        }
+
+        const shown=pending.slice(0,5);
+        const embeds=shown.map(req=>
+          new EmbedBuilder()
+            .setTitle(`認証申請 #${req.id}`)
+            .setDescription(`<@${req.userId}> から認証申請があります。`)
+            .addFields(
+              {name:'ユーザーID',value:req.userId},
+              {name:'承認後のロール',value:`<@&${req.roleId}>`},
+              {name:'申請日時',value:new Date(req.createdAt).toLocaleString('ja-JP',{timeZone:'Asia/Tokyo'})}
+            )
+        );
+
+        const components=shown.map(req=>
+          new ActionRowBuilder().addComponents(
+            new ButtonBuilder()
+              .setCustomId(`verifyadmin:${req.id}:approve`)
+              .setLabel(`#${req.id} 承認`)
+              .setStyle(ButtonStyle.Success),
+            new ButtonBuilder()
+              .setCustomId(`verifyadmin:${req.id}:reject`)
+              .setLabel(`#${req.id} 却下`)
+              .setStyle(ButtonStyle.Danger)
+          )
+        );
+
+        return interaction.reply({
+          content:`🔒 **認証管理者ページ**\n承認待ち: **${pending.length}件**${pending.length>5?'（先頭5件を表示）':''}`,
+          embeds,
+          components,
+          ephemeral:true
+        });
+      }
+
+      if (n === 'verify-status') {
+        const g=guildData(store,interaction.guildId);
+        const roleId=g.verificationRoleId;
+        const role=roleId ? await interaction.guild.roles.fetch(roleId).catch(()=>null) : null;
+        return interaction.reply({
+          content:`🔒 **認証設定**\n認証ロール: ${role?`<@&${role.id}>`:'未設定 / 削除済み'}\nBOTのロール管理権限: ${interaction.guild.members.me?.permissions.has(PermissionFlagsBits.ManageRoles)?'✅':'❌'}`,
+          ephemeral:true
+        });
+      }
+
+      if (n === 'join-leave-settings') {
+        const g=guildData(store,interaction.guildId);
+        const join=interaction.options.getChannel('join');
+        const leave=interaction.options.getChannel('leave');
+
+        if(!join && !leave){
+          return interaction.reply({
+            content:'❌ `join` または `leave` のどちらかを指定してください。',
+            ephemeral:true
+          });
+        }
+
+        if(join) g.joinLogChannelId=join.id;
+        if(leave) g.leaveLogChannelId=leave.id;
+        saveStore(store);
+
+        return interaction.reply({
+          content:`✅ **入退室通知設定を更新しました**\n参加通知: ${g.joinLogChannelId?`<#${g.joinLogChannelId}>`:'未設定'}\n退出通知: ${g.leaveLogChannelId?`<#${g.leaveLogChannelId}>`:'未設定'}\n\n※ Developer Portal の **SERVER MEMBERS INTENT** をONにしてください。`,
+          ephemeral:true
+        });
+      }
+
+      if (n === 'join-leave-status') {
+        const g=guildData(store,interaction.guildId);
+        return interaction.reply({
+          content:`🔒 **入退室通知設定**\n参加通知: ${g.joinLogChannelId?`<#${g.joinLogChannelId}>`:'未設定'}\n退出通知: ${g.leaveLogChannelId?`<#${g.leaveLogChannelId}>`:'未設定'}\nSERVER MEMBERS INTENT: Discord Developer Portal側でON必須`,
+          ephemeral:true
+        });
       }
 
       if (n === 'role-panel') {
         const buttons=[];
+        const errors=[];
+
         for(let x=1;x<=5;x++){
           const role=interaction.options.getRole(`role${x}`);
           if(!role)continue;
-          const label=interaction.options.getString(`label${x}`)||role.name;
-          buttons.push(new ButtonBuilder().setCustomId(`role:${role.id}`).setLabel(label).setStyle(ButtonStyle.Secondary));
+
+          const problem=rolePanelProblem(interaction.guild,role);
+          if(problem){
+            errors.push(`• ${role.name}: ${problem}`);
+            continue;
+          }
+
+          const label=(interaction.options.getString(`label${x}`)||role.name).slice(0,80);
+          buttons.push(
+            new ButtonBuilder()
+              .setCustomId(`role:${role.id}`)
+              .setLabel(label)
+              .setStyle(ButtonStyle.Secondary)
+          );
         }
-        return interaction.reply({embeds:[new EmbedBuilder().setTitle('🎭 ロール選択').setDescription('ボタンを押すと付与/解除します。')],components:[new ActionRowBuilder().addComponents(buttons)]});
+
+        if(errors.length){
+          return interaction.reply({
+            content:`❌ ロールパネルを作成できません。\n\n${errors.join('\n')}\n\n特に、**BOTのロールを配布したいロールより上**に置き、BOTへ **「ロールの管理」** 権限を付けてください。`,
+            ephemeral:true
+          });
+        }
+
+        if(!buttons.length){
+          return interaction.reply({content:'❌ パネルに設定できるロールがありません。',ephemeral:true});
+        }
+
+        return interaction.reply({
+          embeds:[
+            new EmbedBuilder()
+              .setTitle('🎭 ロール選択')
+              .setDescription('下のボタンを押すとロールを付与します。もう一度押すと解除します。')
+          ],
+          components:[new ActionRowBuilder().addComponents(buttons)]
+        });
       }
 
       if (n === 'ticket-panel') {
@@ -602,12 +801,147 @@ ${url}`)],
       if (kind === 'verify') {
         const roleId=guildData(store,interaction.guildId).verificationRoleId;
         if(!roleId)return interaction.reply({content:'❌ 認証ロール未設定です。',ephemeral:true});
-        await interaction.member.roles.add(roleId);return interaction.reply({content:'✅ 認証しました。',ephemeral:true});
+
+        const role=await interaction.guild.roles.fetch(roleId).catch(()=>null);
+        if(!role)return interaction.reply({content:'❌ 認証ロールが見つかりません。管理者が認証パネルを作り直してください。',ephemeral:true});
+
+        const problem=rolePanelProblem(interaction.guild,role);
+        if(problem)return interaction.reply({content:`❌ ${problem}`,ephemeral:true});
+
+        const member=await interaction.guild.members.fetch(interaction.user.id).catch(()=>null);
+        if(!member)return interaction.reply({content:'❌ メンバー情報を取得できませんでした。',ephemeral:true});
+
+        if(member.roles.cache.has(role.id)){
+          return interaction.reply({content:`✅ すでに **${role.name}** が付与されています。`,ephemeral:true});
+        }
+
+        const existing=Object.values(store.verificationRequests || {}).find(
+          r=>r.guildId===interaction.guildId && r.userId===interaction.user.id && r.status==='pending'
+        );
+        if(existing){
+          return interaction.reply({
+            content:`⏳ すでに認証申請済みです。管理者の承認をお待ちください。（申請 #${existing.id}）`,
+            ephemeral:true
+          });
+        }
+
+        const id=store.nextVerificationRequestId++;
+        store.verificationRequests[id]={
+          id,
+          guildId:interaction.guildId,
+          userId:interaction.user.id,
+          roleId,
+          status:'pending',
+          createdAt:new Date().toISOString(),
+          reviewedAt:null,
+          reviewedBy:null
+        };
+        saveStore(store);
+
+        return interaction.reply({
+          content:`✅ 認証申請を送信しました。（申請 #${id}）\n管理者が承認すると **${role.name}** が付与されます。`,
+          ephemeral:true
+        });
+      }
+
+      if (kind === 'verifyadmin') {
+        if(!interaction.memberPermissions?.has(PermissionFlagsBits.ManageGuild) && !isBotOwner(interaction.user.id)){
+          return interaction.reply({content:'❌ 管理者のみ操作できます。',ephemeral:true});
+        }
+
+        const req=store.verificationRequests?.[a];
+        if(!req || req.guildId!==interaction.guildId){
+          return interaction.reply({content:'❌ 認証申請が見つかりません。',ephemeral:true});
+        }
+        if(req.status!=='pending'){
+          return interaction.reply({content:`ℹ️ この申請はすでに **${req.status==='approved'?'承認':'却下'}済み** です。`,ephemeral:true});
+        }
+
+        req.reviewedAt=new Date().toISOString();
+        req.reviewedBy=interaction.user.id;
+
+        if(b==='reject'){
+          req.status='rejected';
+          saveStore(store);
+          const user=await client.users.fetch(req.userId).catch(()=>null);
+          await user?.send(`❌ ${interaction.guild.name} の認証申請 #${req.id} は却下されました。`).catch(()=>{});
+          return interaction.update({
+            content:`❌ 認証申請 #${req.id} を却下しました。`,
+            embeds:[],
+            components:[]
+          });
+        }
+
+        if(b==='approve'){
+          const role=await interaction.guild.roles.fetch(req.roleId).catch(()=>null);
+          const member=await interaction.guild.members.fetch(req.userId).catch(()=>null);
+
+          if(!role || !member){
+            return interaction.reply({content:'❌ 対象メンバーまたは認証ロールを取得できません。',ephemeral:true});
+          }
+
+          const problem=rolePanelProblem(interaction.guild,role);
+          if(problem){
+            return interaction.reply({content:`❌ 承認できません。${problem}`,ephemeral:true});
+          }
+
+          try{
+            if(!member.roles.cache.has(role.id)){
+              await member.roles.add(role,`認証申請 #${req.id} を管理者が承認`);
+            }
+            req.status='approved';
+            saveStore(store);
+
+            const user=await client.users.fetch(req.userId).catch(()=>null);
+            await user?.send(`✅ ${interaction.guild.name} の認証申請 #${req.id} が承認され、${role.name} が付与されました。`).catch(()=>{});
+
+            return interaction.update({
+              content:`✅ 認証申請 #${req.id} を承認し、<@${req.userId}> に <@&${role.id}> を付与しました。`,
+              embeds:[],
+              components:[]
+            });
+          }catch(e){
+            console.error('verify approve error',e);
+            return interaction.reply({
+              content:'❌ ロール付与に失敗しました。BOTの「ロールの管理」権限とロール順序を確認してください。',
+              ephemeral:true
+            });
+          }
+        }
       }
       if (kind === 'role') {
-        const has=interaction.member.roles.cache.has(a);
-        if(has)await interaction.member.roles.remove(a);else await interaction.member.roles.add(a);
-        return interaction.reply({content:has?'✅ ロールを外しました。':'✅ ロールを付与しました。',ephemeral:true});
+        const role=await interaction.guild.roles.fetch(a).catch(()=>null);
+        if(!role){
+          return interaction.reply({content:'❌ このロールは削除されているか、取得できません。管理者にパネルの作り直しを依頼してください。',ephemeral:true});
+        }
+
+        const problem=rolePanelProblem(interaction.guild,role);
+        if(problem){
+          return interaction.reply({content:`❌ ${problem}`,ephemeral:true});
+        }
+
+        const member=await interaction.guild.members.fetch(interaction.user.id).catch(()=>null);
+        if(!member){
+          return interaction.reply({content:'❌ メンバー情報を取得できませんでした。',ephemeral:true});
+        }
+
+        const has=member.roles.cache.has(role.id);
+
+        try{
+          if(has){
+            await member.roles.remove(role,'ロールパネルから解除');
+            return interaction.reply({content:`✅ **${role.name}** を外しました。`,ephemeral:true});
+          }
+
+          await member.roles.add(role,'ロールパネルから付与');
+          return interaction.reply({content:`✅ **${role.name}** を付与しました。`,ephemeral:true});
+        }catch(e){
+          console.error('role panel error',e);
+          return interaction.reply({
+            content:'❌ ロールを変更できませんでした。BOTの「ロールの管理」権限とロール順序を確認してください。',
+            ephemeral:true
+          });
+        }
       }
       if (kind === 'music') {
         const s=players.get(interaction.guildId);

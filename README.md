@@ -1,118 +1,69 @@
-# Discord MultiBot v3.7 — 47都道府県 / 地方設定 / 管理者専用地域管理
+# Discord MultiBot v4.0 — 管理者承認型 認証パネル
 
-v3.6までの機能を維持し、天気地域設定を全面修正した版です。
+v3.9までの機能を維持したまま、認証を「ボタンを押した瞬間にロール付与」から
+「ユーザー申請 → 管理者承認 → ロール付与」に変更しました。
 
-## 天気地域設定
+## 認証の流れ
 
-管理者だけが `/weather-register` を使用できます。
-
-### 1都道府県を追加
+1. 管理者が認証パネルを設置
 ```text
-/weather-register action:追加 region:千葉県
+/verify-panel role:@認証済み
 ```
 
-### 地方単位で追加
+2. メンバーが「認証を申請する」を押す
+- この時点ではロールは付きません。
+- 申請が承認待ちとして保存されます。
+- 同じユーザーが重複申請することはできません。
+
+3. 管理者が管理者ページを開く
 ```text
-/weather-register action:追加 region:関東地方
+/verify-admin
 ```
 
-関東地方を選ぶと、
-茨城県 / 栃木県 / 群馬県 / 埼玉県 / 千葉県 / 東京都 / 神奈川県
-がまとめて登録されます。
+4. 管理者だけに承認待ち一覧が表示
+- ユーザー
+- ユーザーID
+- 承認後のロール
+- 申請日時
+- 「承認」「却下」ボタン
 
-対応地方:
-- 北海道地方
-- 東北地方
-- 関東地方
-- 中部地方
-- 近畿地方
-- 中国地方
-- 四国地方
-- 九州・沖縄地方
+5. 「承認」を押す
+- 対象メンバーに指定ロールを付与
+- 申請を承認済みに変更
+- ユーザーへDM通知
 
-### 全国47都道府県を追加
-```text
-/weather-register action:追加 region:全国47都道府県
-```
-
-Discordの候補表示は最大25件という制限がありますが、入力検索は47都道府県すべてを対象にします。
-例えば `沖縄`、`鹿児島`、`長野` と入力すれば候補が表示されます。
-
-## 複数地域の表示
-
-`/weather` で `region` を指定しなければ、そのサーバーに登録されている地域をすべて表示します。
-
-```text
-/weather
-```
-
-複数地域が登録されていれば複数表示されます。
-47都道府県登録時もDiscordの2000文字制限に合わせて自動的に複数メッセージへ分割します。
-
-一時的に特定の県・地方だけ確認したい場合:
-
-```text
-/weather region:関東地方
-/weather region:千葉県
-```
-
-これは登録内容を変更しません。
+6. 「却下」を押す
+- ロールは付与しない
+- 申請を却下済みに変更
+- ユーザーへDM通知
 
 ## 管理者ページ
 
+`/verify-admin` は Manage Server 権限を持つ管理者用です。
+結果は Ephemeral 表示なので、一般メンバーには承認待ち情報を表示しません。
+
+## 認証設定確認
 ```text
-/weather-admin
+/verify-status
 ```
 
-管理者専用・Ephemeral表示です。一般メンバーには内容を公開しません。
+## 必須設定
 
-表示内容:
-- 自動投稿ON/OFF
-- 投稿時間
-- 投稿チャンネル
-- 登録数（例 20/47）
-- 地方別登録状況
-- 登録済み47都道府県の詳細
+BOTに「ロールの管理」権限が必要です。
+BOTのロールは、認証時に付与するロールより上に配置してください。
 
-`/weather-register` と `/weather-admin` と `/weather-auto` は Manage Server 権限を持つ管理者向けです。
+## 既存機能
 
-## 地震速報は完全に別設定
-
-天気の `weatherRegions` と地震の `earthquakeRegions` は別々に保存します。
-
-天気に関東地方や全国47都道府県を登録しても、地震速報の対象地域は変更されません。
-
-地震側は従来どおり:
-```text
-/earthquake-register
-/earthquake-list
-/earthquake-auto
-```
-
-約5秒間隔の新着監視も維持しています。
-
-## その他の既存機能
-
-自販機 / PayPay受取リンク / 在庫 / 商品DM / 認証 / ロール選択 / チケット /
-自動返信 / 参加退出ログ / 予約投稿 / 自動削除 / モデレーション /
-音楽再生・操作ボタンを維持しています。
-
-AI生成機能は引き続き完全削除済みです。
+入退室通知、ロールパネル、天気47都道府県・地方設定・複数表示、
+管理者専用天気ページ、地震速報独立設定・約5秒監視、
+自販機、PayPay、チケット、予約投稿、モデレーション、音楽などは維持しています。
 
 ## 更新
-
 ```powershell
-cd C:\NoahXJP-site\Discord\discord-multibot-v3.7-region-admin
+cd C:\NoahXJP-site\Discord\discord-multibot-v4.0-verification-approval
 npm install
 npm run deploy-commands
 npm start
 ```
 
-`.env`:
-```env
-DISCORD_TOKEN=新しいBOTトークン
-DISCORD_CLIENT_ID=Application ID
-BOT_OWNER_IDS=自分のDiscordユーザーID
-DATA_DIR=./data
-EARTHQUAKE_POLL_SECONDS=5
-```
+新コマンド `/verify-admin` を追加しているため、`npm run deploy-commands` は必ず実行してください。
