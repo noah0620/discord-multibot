@@ -2,6 +2,7 @@ import { SlashCommandBuilder, PermissionFlagsBits, ChannelType } from 'discord.j
 
 export const commandData = [
   new SlashCommandBuilder().setName('help').setDescription('BOTの機能一覧を表示'),
+  new SlashCommandBuilder().setName('ping').setDescription('BOT応答確認'),
   new SlashCommandBuilder().setName('owner-status').setDescription('BOTオーナー判定を確認'),
   new SlashCommandBuilder().setName('diagnostics').setDescription('【管理者】BOT権限・設定の動作診断')
     .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),

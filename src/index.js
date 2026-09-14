@@ -259,6 +259,16 @@ M${e.hypocenter?.magnitude ?? '?'} / 深さ ${e.hypocenter?.depth ?? '?'}km
 
 client.once(Events.ClientReady, c => {
   console.log(`✅ ${c.user.tag} 起動 / ${c.guilds.cache.size} servers`);
+  console.log(`🆔 起動中BOT User ID: ${c.user.id}`);
+  console.log(`🆔 .env DISCORD_CLIENT_ID: ${config.clientId || '未設定'}`);
+
+  if (config.clientId && config.clientId !== c.user.id) {
+    console.error('❌ 重要: DISCORD_CLIENT_ID と起動中BOTのIDが一致していません。');
+    console.error('   deploy-commands はv5.2からBOTトークン側IDへ自動登録します。');
+    console.error('   .env の DISCORD_CLIENT_ID も上記「起動中BOT User ID」に修正してください。');
+  } else {
+    console.log('✅ BOTトークンとApplication IDの対応: OK');
+  }
 });
 
 client.on(Events.GuildMemberAdd, async member => {
@@ -346,6 +356,7 @@ function rolePanelProblem(guild, role) {
 }
 
 client.on(Events.InteractionCreate, async interaction => {
+  console.log(`📨 Interaction受信: type=${interaction.type} command=${interaction.commandName || '-'} user=${interaction.user?.tag || interaction.user?.id || '-'}`);
   try {
     if (interaction.isAutocomplete()) {
       const choices = interaction.commandName.startsWith('earthquake')
@@ -356,6 +367,13 @@ client.on(Events.InteractionCreate, async interaction => {
 
     if (interaction.isChatInputCommand()) {
       const n = interaction.commandName;
+
+      if (n === 'ping') {
+        return interaction.reply({
+          content:`✅ BOTは正常にコマンドを受信しています。\nBOT: ${client.user.tag}\nBOT ID: ${client.user.id}\nGuild: ${interaction.guild?.name || 'DM'}\n時刻: ${new Date().toLocaleString('ja-JP',{timeZone:'Asia/Tokyo'})}`,
+          ephemeral:true
+        });
+      }
 
       if (n === 'help') {
         return interaction.reply({
@@ -1438,7 +1456,7 @@ ${url}`)],
       return interaction.reply({content:`✅ 注文 #${id} を送信しました。合計 ¥${order.total.toLocaleString()} です。`,ephemeral:true});
     }
   } catch (e) {
-    console.error(e);
+    console.error('❌ Interaction処理エラー:', e);
     if(interaction.isRepliable()){
       const m={content:'❌ エラーが発生しました。コンソールを確認してください。',ephemeral:true};
       if(interaction.replied||interaction.deferred)interaction.followUp(m).catch(()=>{});else interaction.reply(m).catch(()=>{});
