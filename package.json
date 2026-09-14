@@ -1,7 +1,7 @@
 {
   "name": "discord-multibot-v3-merged",
-  "version": "3.4.0",
-  "description": "Discord MultiBot v3.4 - AI removed, music control buttons added.",
+  "version": "3.6.0",
+  "description": "Discord MultiBot v3.6 - corrected Japanese weather forecast output, per-server schedule, fast earthquake alerts.",
   "type": "module",
   "main": "src/index.js",
   "scripts": {

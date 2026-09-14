@@ -64,8 +64,9 @@ export const commandData = [
     .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
   new SlashCommandBuilder().setName('weather-list').setDescription('登録済み天気地域')
     .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
-  new SlashCommandBuilder().setName('weather-auto').setDescription('毎日の自動天気投稿をON/OFF')
+  new SlashCommandBuilder().setName('weather-auto').setDescription('サーバーごとの自動天気投稿時刻を設定')
     .addBooleanOption(o=>o.setName('enabled').setDescription('ON/OFF').setRequired(true))
+    .addStringOption(o=>o.setName('time').setDescription('毎日の投稿時刻 例: 07:00 / 18:30'))
     .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
 
   new SlashCommandBuilder().setName('earthquake').setDescription('最新地震情報'),

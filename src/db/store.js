@@ -50,8 +50,16 @@ export function guildData(store, guildId) {
     earthquakeRegions: [],
     minIntensity: 3,
     weatherAutoEnabled: false,
+    weatherAutoTime: '07:00',
     earthquakeAutoEnabled: false,
     lastWeatherPostDate: null
   };
-  return store.guilds[guildId];
+  const g = store.guilds[guildId];
+  g.weatherAutoTime ??= '07:00';
+  g.weatherAutoEnabled ??= false;
+  g.earthquakeAutoEnabled ??= false;
+  g.minIntensity ??= 3;
+  g.weatherRegions ??= [];
+  g.earthquakeRegions ??= [];
+  return g;
 }

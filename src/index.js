@@ -6,7 +6,7 @@ import {
 import { joinVoiceChannel, createAudioPlayer, createAudioResource, AudioPlayerStatus } from '@discordjs/voice';
 import { config, assertConfig, isBotOwner } from './config.js';
 import { loadStore, saveStore, guildData } from './db/store.js';
-import { searchRegionChoices } from './regions.js';
+import { searchRegionChoices, PREFECTURES } from './regions.js';
 import path from 'node:path';
 
 assertConfig();
@@ -38,26 +38,121 @@ function scaleToNumber(scale) {
 }
 async function geocode(name) {
   const u = new URL('https://geocoding-api.open-meteo.com/v1/search');
-  u.searchParams.set('name', name); u.searchParams.set('count', '1');
-  u.searchParams.set('language', 'ja'); u.searchParams.set('format', 'json');
-  const r = await fetch(u); const j = await r.json();
+  u.searchParams.set('name', name);
+  u.searchParams.set('count', '1');
+  u.searchParams.set('language', 'ja');
+  u.searchParams.set('format', 'json');
+  const r = await fetch(u);
+  if (!r.ok) throw new Error(`地域検索に失敗しました (${r.status})`);
+  const j = await r.json();
   return j.results?.[0] || null;
 }
-async function weatherText(name) {
-  const loc = await geocode(name);
-  if (!loc) return `❌ 「${name}」が見つかりませんでした。`;
-  const u = new URL('https://api.open-meteo.com/v1/forecast');
-  u.searchParams.set('latitude', loc.latitude); u.searchParams.set('longitude', loc.longitude);
-  u.searchParams.set('current', 'temperature_2m,apparent_temperature,precipitation,weather_code,wind_speed_10m');
-  u.searchParams.set('daily', 'temperature_2m_max,temperature_2m_min,precipitation_probability_max');
-  u.searchParams.set('timezone', 'Asia/Tokyo');
-  const r = await fetch(u); const w = await r.json();
-  return `🌤 **${loc.name}${loc.admin1 ? `（${loc.admin1}）` : ''}**
-🌡 現在 ${w.current?.temperature_2m ?? '-'}℃ / 体感 ${w.current?.apparent_temperature ?? '-'}℃
-☔ 降水 ${w.current?.precipitation ?? '-'}mm / 最大降水確率 ${w.daily?.precipitation_probability_max?.[0] ?? '-'}%
-📈 最高 ${w.daily?.temperature_2m_max?.[0] ?? '-'}℃ / 最低 ${w.daily?.temperature_2m_min?.[0] ?? '-'}℃
-💨 風速 ${w.current?.wind_speed_10m ?? '-'}km/h`;
+
+function weatherLookupName(name) {
+  const row = PREFECTURES.find(([pref]) => pref === name);
+  return row ? row[1] : name;
 }
+
+function weatherLabel(name) {
+  const row = PREFECTURES.find(([pref, capital]) => pref === name || capital === name);
+  return row ? row[0] : name;
+}
+
+const WEATHER_CODE_TEXT = {
+  0:'晴れ', 1:'ほぼ晴れ', 2:'やや曇り', 3:'曇り',
+  45:'霧', 48:'着氷性の霧',
+  51:'弱い霧雨', 53:'霧雨', 55:'強い霧雨',
+  56:'弱い着氷性霧雨', 57:'強い着氷性霧雨',
+  61:'弱い雨', 63:'雨', 65:'強い雨',
+  66:'弱い着氷性の雨', 67:'強い着氷性の雨',
+  71:'弱い雪', 73:'雪', 75:'強い雪', 77:'雪粒',
+  80:'弱いにわか雨', 81:'にわか雨', 82:'激しいにわか雨',
+  85:'弱いにわか雪', 86:'強いにわか雪',
+  95:'雷雨', 96:'ひょうを伴う雷雨', 99:'激しいひょうを伴う雷雨'
+};
+
+function weatherKind(code) {
+  if ([95,96,99].includes(code)) return 'thunder';
+  if ([71,73,75,77,85,86].includes(code)) return 'snow';
+  if ([51,53,55,56,57,61,63,65,66,67,80,81,82].includes(code)) return 'rain';
+  if ([3,45,48].includes(code)) return 'cloudy';
+  if ([1,2].includes(code)) return 'partly';
+  return 'sunny';
+}
+
+function weatherIcon(code) {
+  const kind = weatherKind(code);
+  if (kind === 'thunder') return '⛈️';
+  if (kind === 'snow') return '🌨️';
+  if (kind === 'rain') return '☔️';
+  if (kind === 'cloudy') return '☁️';
+  if (kind === 'partly') return '🌤️';
+  return '☀️';
+}
+
+function weatherJudgement(code, precipitationMm, probability) {
+  const kind = weatherKind(code);
+  if (kind === 'thunder') return '雷雨となる可能性があります。';
+  if (kind === 'snow') return '雪が降るでしょう。';
+
+  // 天気コードが雨系、日降水量0.1mm以上、または最大降水確率50%以上なら雨予報。
+  const rainExpected = kind === 'rain' || precipitationMm >= 0.1 || probability >= 50;
+  return rainExpected ? '雨が降るでしょう。' : '雨は降らないでしょう。';
+}
+
+function oneDecimal(value) {
+  const n = Number(value ?? 0);
+  return Math.round(n * 10) / 10;
+}
+
+function jpWeatherTimestamp(date = new Date()) {
+  const parts = new Intl.DateTimeFormat('ja-JP', {
+    timeZone:'Asia/Tokyo',
+    year:'numeric', month:'2-digit', day:'2-digit',
+    hour:'2-digit', minute:'2-digit', hour12:false
+  }).formatToParts(date);
+  const get = type => parts.find(p => p.type === type)?.value;
+  return `${get('year')}/${get('month')}/${get('day')} ${get('hour')}:${get('minute')}`;
+}
+
+async function weatherText(name) {
+  const lookup = weatherLookupName(name);
+  const label = weatherLabel(name);
+  const loc = await geocode(lookup);
+  if (!loc) return `❌ 「${label}」の天気地点が見つかりませんでした。`;
+
+  const u = new URL('https://api.open-meteo.com/v1/forecast');
+  u.searchParams.set('latitude', loc.latitude);
+  u.searchParams.set('longitude', loc.longitude);
+  u.searchParams.set(
+    'daily',
+    'weather_code,temperature_2m_max,temperature_2m_min,precipitation_sum,precipitation_probability_max'
+  );
+  u.searchParams.set('timezone', 'Asia/Tokyo');
+  u.searchParams.set('forecast_days', '1');
+
+  const r = await fetch(u);
+  if (!r.ok) return `❌ ${label} の天気情報取得に失敗しました (${r.status})。`;
+  const w = await r.json();
+
+  const code = Number(w.daily?.weather_code?.[0] ?? 0);
+  const min = oneDecimal(w.daily?.temperature_2m_min?.[0]);
+  const max = oneDecimal(w.daily?.temperature_2m_max?.[0]);
+  const precipitation = oneDecimal(w.daily?.precipitation_sum?.[0]);
+  const probability = Math.round(Number(w.daily?.precipitation_probability_max?.[0] ?? 0));
+
+  const description = WEATHER_CODE_TEXT[code] || `天気コード${code}`;
+  const icon = weatherIcon(code);
+  const judgement = weatherJudgement(code, precipitation, probability);
+
+  return [
+    `**${label}は【${icon}】${judgement}**`,
+    `本日${label}の天気は、${description}`,
+    `最低気温 ${min}°C / 最高気温 ${max}°C`,
+    `降水量 ${precipitation} mm / 降水確率 ${probability}%`
+  ].join('\\n');
+}
+
 async function fetchLatestEarthquake() {
   const d = await fetch('https://api.p2pquake.net/v2/history?codes=551&limit=1').then(r=>r.json());
   return d?.[0] || null;
@@ -130,15 +225,13 @@ client.on(Events.InteractionCreate, async interaction => {
 /moderation-rule /moderation-list /moderation-remove
 
 🌤 天気
-/weather /weather-register /weather-list /weather-auto
+/weather /weather-register /weather-list /weather-auto（サーバー別時刻）
 
 🚨 地震
 /earthquake /earthquake-register /earthquake-list /earthquake-auto
 
 🎵 音楽
-/play /queue /pause /resume /skip /stop /nowplaying /volume
-
-※ 無料優先。high APIは管理者が許可した場合のみ。`
+/play /queue /pause /resume /skip /stop /nowplaying /volume`
           )],
           ephemeral:true
         });
@@ -223,7 +316,7 @@ client.on(Events.InteractionCreate, async interaction => {
       }
 
       if (n === 'weather') {
-        await interaction.deferReply();return interaction.editReply(await weatherText(interaction.options.getString('region',true)));
+        await interaction.deferReply();const wt=await weatherText(interaction.options.getString('region',true));return interaction.editReply(`**${jpWeatherTimestamp()}**\n\n${wt}`);
       }
       if (n === 'weather-register') {
         const g=guildData(store,interaction.guildId),r=interaction.options.getString('region',true);
@@ -231,11 +324,30 @@ client.on(Events.InteractionCreate, async interaction => {
         return interaction.reply({content:`✅ 天気地域: ${g.weatherRegions.join(' / ')}`,ephemeral:true});
       }
       if (n === 'weather-list') {
-        const g=guildData(store,interaction.guildId);return interaction.reply({content:g.weatherRegions.length?g.weatherRegions.join(' / '):'未登録です。',ephemeral:true});
+        const g=guildData(store,interaction.guildId);
+        return interaction.reply({
+          content:`地域: ${g.weatherRegions.join(' / ')||'未登録'}\n自動投稿: ${g.weatherAutoEnabled?'ON':'OFF'}\n投稿時刻: ${g.weatherAutoTime || '07:00'}（日本時間）`,
+          ephemeral:true
+        });
       }
       if (n === 'weather-auto') {
-        const g=guildData(store,interaction.guildId);g.weatherAutoEnabled=interaction.options.getBoolean('enabled',true);saveStore(store);
-        return interaction.reply({content:`✅ 自動天気投稿: ${g.weatherAutoEnabled?'ON':'OFF'}`,ephemeral:true});
+        const g=guildData(store,interaction.guildId);
+        const enabled=interaction.options.getBoolean('enabled',true);
+        const raw=interaction.options.getString('time');
+
+        if(raw){
+          const m=raw.trim().match(/^(?:[01]\d|2[0-3]):[0-5]\d$/);
+          if(!m)return interaction.reply({content:'❌ 時刻は `07:00` や `18:30` のように24時間表記で入力してください。',ephemeral:true});
+          g.weatherAutoTime=raw.trim();
+          g.lastWeatherPostDate=null;
+        }
+
+        g.weatherAutoEnabled=enabled;
+        saveStore(store);
+        return interaction.reply({
+          content:`✅ 自動天気投稿: ${g.weatherAutoEnabled?'ON':'OFF'}\n🕒 投稿時刻: ${g.weatherAutoTime || '07:00'}（日本時間）`,
+          ephemeral:true
+        });
       }
 
       if (n === 'earthquake') {
@@ -250,8 +362,13 @@ client.on(Events.InteractionCreate, async interaction => {
         const g=guildData(store,interaction.guildId);return interaction.reply({content:`地域: ${g.earthquakeRegions.join(' / ')||'未登録'} / 最低震度 ${g.minIntensity}`,ephemeral:true});
       }
       if (n === 'earthquake-auto') {
-        const g=guildData(store,interaction.guildId);g.earthquakeAutoEnabled=interaction.options.getBoolean('enabled',true);saveStore(store);
-        return interaction.reply({content:`✅ 自動地震速報: ${g.earthquakeAutoEnabled?'ON':'OFF'}`,ephemeral:true});
+        const g=guildData(store,interaction.guildId);
+        g.earthquakeAutoEnabled=interaction.options.getBoolean('enabled',true);
+        saveStore(store);
+        return interaction.reply({
+          content:`✅ 自動地震速報: ${g.earthquakeAutoEnabled?'ON':'OFF'}\n⚡ 新着地震を約${config.earthquakePollSeconds}秒間隔で監視し、取得後すぐ投稿します。`,
+          ephemeral:true
+        });
       }
 
       if (n === 'schedule-post') {
@@ -497,18 +614,32 @@ setInterval(async()=>{
 
 setInterval(async()=>{
   const now=new Date();
-  const jp=new Date(now.toLocaleString('en-US',{timeZone:'Asia/Tokyo'}));
-  if(jp.getHours()!==config.weatherDailyHour)return;
-  const dateKey=`${jp.getFullYear()}-${jp.getMonth()+1}-${jp.getDate()}`;
+  const parts=new Intl.DateTimeFormat('ja-JP',{
+    timeZone:'Asia/Tokyo',
+    year:'numeric',month:'2-digit',day:'2-digit',
+    hour:'2-digit',minute:'2-digit',hour12:false
+  }).formatToParts(now);
+  const get=(type)=>parts.find(p=>p.type===type)?.value;
+  const currentTime=`${get('hour')}:${get('minute')}`;
+  const dateKey=`${get('year')}-${get('month')}-${get('day')}`;
+
   for(const guild of client.guilds.cache.values()){
     const g=guildData(store,guild.id);
-    if(!g.weatherAutoEnabled||!g.weatherChannelId||!g.weatherRegions.length||g.lastWeatherPostDate===dateKey)continue;
-    const ch=guild.channels.cache.get(g.weatherChannelId);if(!ch)continue;
+    const postTime=g.weatherAutoTime || '07:00';
+
+    if(!g.weatherAutoEnabled || !g.weatherChannelId || !g.weatherRegions.length)continue;
+    if(currentTime!==postTime || g.lastWeatherPostDate===dateKey)continue;
+
+    const ch=guild.channels.cache.get(g.weatherChannelId);
+    if(!ch)continue;
+
     const texts=[];
     for(const r of g.weatherRegions.slice(0,10))texts.push(await weatherText(r));
-    await ch.send(texts.join('\n\n')).catch(()=>{});
-    g.lastWeatherPostDate=dateKey;saveStore(store);
+    await ch.send(`**${jpWeatherTimestamp()}**\n\n${texts.join('\n\n')}`).catch(()=>{});
+
+    g.lastWeatherPostDate=dateKey;
+    saveStore(store);
   }
-},60*1000);
+},15*1000);
 
 client.login(config.token);

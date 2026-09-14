@@ -5,8 +5,7 @@ export const config = {
   clientId: process.env.DISCORD_CLIENT_ID?.trim(),
   ownerIds: (process.env.BOT_OWNER_IDS || '').split(',').map(v => v.trim()).filter(Boolean),
   dataDir: process.env.DATA_DIR?.trim() || './data',
-  earthquakePollSeconds: Math.max(30, Number(process.env.EARTHQUAKE_POLL_SECONDS || 60)),
-  weatherDailyHour: Math.min(23, Math.max(0, Number(process.env.WEATHER_DAILY_HOUR || 7)))
+  earthquakePollSeconds: Math.max(5, Number(process.env.EARTHQUAKE_POLL_SECONDS || 5))
 };
 
 export function assertConfig() {
