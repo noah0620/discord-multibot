@@ -1,7 +1,7 @@
 {
-  "name": "discord-multibot-v5-6-1-weather-settings-fixed",
-  "version": "5.6.1",
-  "description": "Discord MultiBot v5.6.1 - fixed weather region/list/auto channel settings.",
+  "name": "discord-multibot-v5-7-weather-channel-routing",
+  "version": "5.7.0",
+  "description": "Discord MultiBot v5.7 - per prefecture/region weather notification channels.",
   "type": "module",
   "main": "src/index.js",
   "scripts": {

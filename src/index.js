@@ -36,7 +36,7 @@ const ADMIN_COMMANDS=new Set([
   'autoreply-add','autoreply-remove','autoreply-list',
   'schedule-post','schedule-list','schedule-cancel',
   'moderation-rule','moderation-list','moderation-remove',
-  'weather-register','weather-list','weather-admin','weather-auto',
+  'weather-register','weather-list','weather-admin','weather-auto','weather-channel','weather-channel-remove',
   'earthquake-register','earthquake-list','earthquake-auto',
   'diagnostics'
 ]);
@@ -444,7 +444,7 @@ client.on(Events.InteractionCreate, async interaction => {
 /moderation-rule /moderation-list /moderation-remove
 
 9. 🌤️ **47都道府県・地方・全国・複数地域天気**
-/weather /weather-register /weather-list /weather-admin /weather-auto
+/weather /weather-register /weather-list /weather-admin /weather-auto /weather-channel /weather-channel-remove
 
 10. 🚨 **天気とは独立した地震速報**
 /earthquake /earthquake-register /earthquake-list /earthquake-auto
@@ -1045,6 +1045,7 @@ AI生成機能は搭載していません。`
 
         if(action==='clear'){
           g.weatherRegions=[];
+          g.weatherChannelRoutes={};
           g.lastWeatherPostDate=null;
           saveStore(store);
           return interaction.reply({content:'✅ 天気地域をすべて削除しました。',ephemeral:true});
@@ -1072,6 +1073,8 @@ AI生成機能は搭載していません。`
         if(action==='remove'){
           const removeSet=new Set(expanded);
           g.weatherRegions=(g.weatherRegions || []).filter(x=>!removeSet.has(x));
+          g.weatherChannelRoutes ??= {};
+          for(const pref of expanded)delete g.weatherChannelRoutes[pref];
           g.lastWeatherPostDate=null;
           saveStore(store);
           return interaction.reply({
@@ -1085,25 +1088,66 @@ AI生成機能は搭載していません。`
         const g=guildData(store,interaction.guildId);
         const registered=new Set(g.weatherRegions||[]);
         const allRegistered=[...registered].filter(p=>PREFECTURES.some(([name])=>name===p));
+        g.weatherChannelRoutes ??= {};
         const areaLines=[];
 
         for(const [areaName,prefs] of Object.entries(WEATHER_AREAS)){
           const inArea=prefs.filter(p=>registered.has(p));
           if(!inArea.length)continue;
-          areaLines.push(`**${areaName} (${inArea.length}/${prefs.length})**\n${inArea.join('、')}`);
+          const details=inArea.map(pref=>{
+            const channelId=g.weatherChannelRoutes[pref] || g.weatherChannelId;
+            return `${pref} → ${channelId?`<#${channelId}>`:'⚠️ 未設定'}`;
+          });
+          areaLines.push(`**${areaName} (${inArea.length}/${prefs.length})**\n${details.join('\n')}`);
         }
 
-        const header=`🔒 **登録済み天気地域**\n`
+        const header=`🔒 **登録済み天気地域・投稿先**\n`
           + `合計: **${allRegistered.length}/47都道府県**\n`
           + `自動投稿: **${g.weatherAutoEnabled?'ON':'OFF'}**\n`
           + `投稿時刻: **${g.weatherAutoTime||'07:00'}**（日本時間）\n`
-          + `投稿先: ${g.weatherChannelId?`<#${g.weatherChannelId}>`:'⚠️ 未設定'}`
-          + (!allRegistered.length?`\n\n⚠️ 地域が未登録です。\n\`/weather-register action:追加 region:関東地方\` のように登録してください。`:'')
-          + (g.weatherAutoEnabled&&!g.weatherChannelId?`\n⚠️ 自動投稿ONですが投稿先が未設定です。`:'');
+          + `共通投稿先: ${g.weatherChannelId?`<#${g.weatherChannelId}>`:'⚠️ 未設定'}`
+          + (!allRegistered.length?`\n\n⚠️ 地域が未登録です。`:'');
         const pages=splitDiscordBlocks(header,areaLines,1900);
         await interaction.reply({content:pages[0],ephemeral:true});
         for(const page of pages.slice(1))await interaction.followUp({content:page,ephemeral:true});
         return;
+      }
+
+      if (n === 'weather-channel') {
+        const g=guildData(store,interaction.guildId);
+        const selected=interaction.options.getString('region',true);
+        const channel=interaction.options.getChannel('channel',true);
+        const expanded=expandWeatherRegion(selected);
+        if(!expanded.length){
+          return interaction.reply({content:'❌ 地域が見つかりません。',ephemeral:true});
+        }
+
+        g.weatherChannelRoutes ??= {};
+        for(const pref of expanded)g.weatherChannelRoutes[pref]=channel.id;
+        saveStore(store);
+
+        return interaction.reply({
+          content:`✅ **${selected}** の天気投稿先を ${channel} に設定しました。\n`
+            + `${expanded.length>1?`対象 ${expanded.length}都道府県: `:''}${expanded.join('、')}`,
+          ephemeral:true
+        });
+      }
+
+      if (n === 'weather-channel-remove') {
+        const g=guildData(store,interaction.guildId);
+        const selected=interaction.options.getString('region',true);
+        const expanded=expandWeatherRegion(selected);
+        if(!expanded.length){
+          return interaction.reply({content:'❌ 地域が見つかりません。',ephemeral:true});
+        }
+        g.weatherChannelRoutes ??= {};
+        for(const pref of expanded)delete g.weatherChannelRoutes[pref];
+        saveStore(store);
+        return interaction.reply({
+          content:`✅ **${selected}** の個別投稿先設定を解除しました。\n`
+            + `以後はサーバー共通投稿先 ${g.weatherChannelId?`<#${g.weatherChannelId}>`:'（未設定）'} を使用します。`,
+          ephemeral:true
+        });
       }
 
       if (n === 'weather-admin') {
@@ -1113,10 +1157,14 @@ AI生成機能は搭載していません。`
         for(const [areaName,prefs] of Object.entries(WEATHER_AREAS)){
           const inArea=prefs.filter(p=>registered.has(p));
           const missing=prefs.filter(p=>!registered.has(p));
-          areaLines.push(`**${areaName}　${inArea.length} / ${prefs.length}県**\n登録済み: ${inArea.length?inArea.join('、'):'なし'}${missing.length&&inArea.length?`\n未登録: ${missing.join('、')}`:''}`);
+          const routeDetails=inArea.map(pref=>{
+            const channelId=(g.weatherChannelRoutes||{})[pref] || g.weatherChannelId;
+            return `${pref} → ${channelId?`<#${channelId}>`:'⚠️ 投稿先未設定'}`;
+          });
+          areaLines.push(`**${areaName}　${inArea.length} / ${prefs.length}県**\n${routeDetails.length?routeDetails.join('\n'):'登録済み: なし'}${missing.length&&inArea.length?`\n未登録: ${missing.join('、')}`:''}`);
         }
         const allRegistered=[...registered].filter(p=>PREFECTURES.some(([name])=>name===p));
-        const header=`🔒 **天気地域 管理者ページ**\n自動投稿: ${g.weatherAutoEnabled?'ON':'OFF'}\n投稿時刻: ${g.weatherAutoTime||'07:00'}（日本時間）\n投稿先: ${g.weatherChannelId?`<#${g.weatherChannelId}>`:'未設定'}\n合計登録: **${allRegistered.length} / 47都道府県**`;
+        const header=`🔒 **天気地域 管理者ページ**\n自動投稿: ${g.weatherAutoEnabled?'ON':'OFF'}\n投稿時刻: ${g.weatherAutoTime||'07:00'}（日本時間）\n共通投稿先: ${g.weatherChannelId?`<#${g.weatherChannelId}>`:'未設定'}\n合計登録: **${allRegistered.length} / 47都道府県**`;
         const pages=splitDiscordBlocks(header,areaLines,1900);
         await interaction.reply({content:pages[0],ephemeral:true});
         for(const page of pages.slice(1)) await interaction.followUp({content:page,ephemeral:true});
@@ -1140,9 +1188,12 @@ AI生成機能は搭載していません。`
 
         if(channel)g.weatherChannelId=channel.id;
 
-        if(enabled && !g.weatherChannelId){
+        const registeredForAuto=g.weatherRegions||[];
+        const missingRoute=registeredForAuto.filter(pref=>!(g.weatherChannelRoutes||{})[pref] && !g.weatherChannelId);
+        if(enabled && missingRoute.length){
           return interaction.reply({
-            content:'❌ 自動投稿をONにするには投稿先チャンネルが必要です。\n例: `/weather-auto enabled:True time:07:00 channel:#天気`',
+            content:`❌ 投稿先が未設定の地域があります: ${missingRoute.join('、')}\n`
+              + '`/weather-channel` で地域ごとの投稿先を設定するか、`/weather-auto channel:` で共通投稿先を設定してください。',
             ephemeral:true
           });
         }
@@ -1160,7 +1211,7 @@ AI生成機能は搭載していません。`
           content:`✅ **自動天気設定を保存しました**\n`
             + `自動投稿: **${g.weatherAutoEnabled?'ON':'OFF'}**\n`
             + `投稿時刻: **${g.weatherAutoTime||'07:00'}**（日本時間）\n`
-            + `投稿先: ${g.weatherChannelId?`<#${g.weatherChannelId}>`:'未設定'}\n`
+            + `共通投稿先: ${g.weatherChannelId?`<#${g.weatherChannelId}>`:'未設定（地域別設定を使用可能）'}\n`
             + `登録地域: **${(g.weatherRegions||[]).length}/47都道府県**`,
           ephemeral:true
         });
@@ -1729,21 +1780,34 @@ setInterval(async()=>{
     const g=guildData(store,guild.id);
     const postTime=g.weatherAutoTime || '07:00';
 
-    if(!g.weatherAutoEnabled || !g.weatherChannelId || !g.weatherRegions.length)continue;
+    if(!g.weatherAutoEnabled || !g.weatherRegions.length)continue;
     if(currentTime!==postTime || g.lastWeatherPostDate===dateKey)continue;
 
     try{
-      const ch=guild.channels.cache.get(g.weatherChannelId)
-        || await guild.channels.fetch(g.weatherChannelId).catch(()=>null);
-      if(!ch?.isTextBased())continue;
+      g.weatherChannelRoutes ??= {};
+      const groups=new Map();
+      for(const pref of g.weatherRegions){
+        const channelId=g.weatherChannelRoutes[pref] || g.weatherChannelId;
+        if(!channelId)continue;
+        if(!groups.has(channelId))groups.set(channelId,[]);
+        groups.get(channelId).push(pref);
+      }
+      if(!groups.size)continue;
 
-      const pages=await buildWeatherPages(g.weatherRegions);
-      for(const page of pages){
-        await ch.send(page);
+      let sentAny=false;
+      for(const [channelId,regions] of groups){
+        const ch=guild.channels.cache.get(channelId)
+          || await guild.channels.fetch(channelId).catch(()=>null);
+        if(!ch?.isTextBased())continue;
+        const pages=await buildWeatherPages(regions);
+        for(const page of pages)await ch.send(page);
+        sentAny=true;
       }
 
-      g.lastWeatherPostDate=dateKey;
-      saveStore(store);
+      if(sentAny){
+        g.lastWeatherPostDate=dateKey;
+        saveStore(store);
+      }
     }catch(e){
       console.error(`weather auto ${guild.id}`,e);
     }

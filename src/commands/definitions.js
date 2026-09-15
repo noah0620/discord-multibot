@@ -124,6 +124,12 @@ export const commandData = [
     ))
     .addStringOption(o=>o.setName('region').setDescription('47都道府県・地方・全国').setAutocomplete(true)),
   new SlashCommandBuilder().setName('weather-admin').setDescription('【管理者】天気地域登録の詳細を表示'),
+  new SlashCommandBuilder().setName('weather-channel').setDescription('【管理者】地域・地方ごとの天気投稿チャンネルを設定')
+    .addStringOption(o=>o.setName('region').setDescription('都道府県・地方・全国').setAutocomplete(true).setRequired(true))
+    .addChannelOption(o=>o.setName('channel').setDescription('この地域の天気投稿先').setRequired(true).addChannelTypes(ChannelType.GuildText)),
+  new SlashCommandBuilder().setName('weather-channel-remove').setDescription('【管理者】地域・地方ごとの投稿先設定を解除')
+    .addStringOption(o=>o.setName('region').setDescription('都道府県・地方・全国').setAutocomplete(true).setRequired(true)),
+
   new SlashCommandBuilder().setName('weather-list').setDescription('【管理者】登録済み天気地域を表示'),
   new SlashCommandBuilder().setName('weather-auto').setDescription('【管理者】自動天気のON/OFF・時刻・投稿先を設定')
     .addBooleanOption(o=>o.setName('enabled').setDescription('ON/OFF').setRequired(true))

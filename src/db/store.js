@@ -56,6 +56,7 @@ export function guildData(store, guildId) {
     weatherChannelId: null,
     autoReplies: {},
     weatherRegions: [],
+    weatherChannelRoutes: {},
     earthquakeRegions: [],
     minIntensity: 3,
     weatherAutoEnabled: false,
@@ -69,6 +70,7 @@ export function guildData(store, guildId) {
   g.earthquakeAutoEnabled ??= false;
   g.minIntensity ??= 3;
   g.weatherRegions ??= [];
+  g.weatherChannelRoutes ??= {};
   g.earthquakeRegions ??= [];
   g.autoReplies ??= {};
   g.adminRoleId ??= null;
