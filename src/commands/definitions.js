@@ -4,7 +4,7 @@ export const commandData = [
   new SlashCommandBuilder().setName('help').setDescription('BOTの機能一覧を表示'),
   new SlashCommandBuilder().setName('ping').setDescription('BOT応答確認'),
   new SlashCommandBuilder().setName('owner-status').setDescription('BOTオーナー判定を確認'),
-  new SlashCommandBuilder().setName('admin-role-set').setDescription('【BOTオーナー】管理者ロールを設定')
+  new SlashCommandBuilder().setName('admin-role-set').setDescription('【鯖主】管理者コマンドを使えるロールを設定')
     .addRoleOption(o=>o.setName('role').setDescription('管理者ロール').setRequired(true)),
   new SlashCommandBuilder().setName('admin-role-status').setDescription('管理者ロール設定を確認'),
   new SlashCommandBuilder().setName('diagnostics').setDescription('【管理者】BOT権限・設定の動作診断'),

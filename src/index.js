@@ -15,9 +15,14 @@ assertConfig();
 const store = loadStore();
 const players = new Map();
 
+function isGuildOwner(interaction){
+  return Boolean(interaction.guild && interaction.user?.id === interaction.guild.ownerId);
+}
+
 function hasConfiguredAdminRole(interaction){
   if(!interaction.guildId)return false;
-  if(isBotOwner(interaction.user.id))return true;
+  if(isGuildOwner(interaction))return true;
+  if(isBotOwner(interaction.user.id))return true; // 緊急復旧用
   const g=guildData(store,interaction.guildId);
   return Boolean(g.adminRoleId && interaction.member?.roles?.cache?.has(g.adminRoleId));
 }
@@ -395,7 +400,7 @@ client.on(Events.InteractionCreate, async interaction => {
         return interaction.reply({
           content:g.adminRoleId
             ? `❌ 管理者ロール <@&${g.adminRoleId}> を持つメンバーのみ使用できます。`
-            : '❌ 管理者ロールが未設定です。BOTオーナーが `/admin-role-set` で設定してください。',
+            : '❌ 管理者ロールが未設定です。サーバー所有者（鯖主）が `/admin-role-set` で設定してください。',
           ephemeral:true
         });
       }
@@ -447,7 +452,7 @@ client.on(Events.InteractionCreate, async interaction => {
 11. 🎵 **VC音楽**
 /play /queue /pause /resume /skip /stop /nowplaying /volume
 
-12. 👑 **BOTオーナー機能**
+12. 👑 **管理者権限**
 /owner-status /admin-role-set /admin-role-status
 
 🔧 **動作診断**
@@ -465,22 +470,37 @@ AI生成機能は搭載していません。`
         return interaction.reply({ content:isBotOwner(interaction.user.id)?'✅ BOTオーナーです。':'ℹ️ BOTオーナーではありません。', ephemeral:true });
       }
       if (n === 'admin-role-set') {
-        if(!isBotOwner(interaction.user.id)){
-          return interaction.reply({content:'❌ BOTオーナーのみ変更できます。',ephemeral:true});
+        if(!isGuildOwner(interaction)){
+          return interaction.reply({
+            content:'❌ 管理者ロールを設定・変更できるのは、このサーバーの所有者（鯖主）だけです。',
+            ephemeral:true
+          });
         }
         const role=interaction.options.getRole('role',true);
-        if(role.id===interaction.guild.id)return interaction.reply({content:'❌ @everyone は設定できません。',ephemeral:true});
+        if(role.id===interaction.guild.id){
+          return interaction.reply({content:'❌ @everyone は管理者ロールに設定できません。',ephemeral:true});
+        }
         const g=guildData(store,interaction.guildId);
-        g.adminRoleId=role.id; saveStore(store);
-        return interaction.reply({content:`✅ 管理者ロールを ${role} に設定しました。`,ephemeral:true});
+        g.adminRoleId=role.id;
+        saveStore(store);
+        return interaction.reply({
+          content:`✅ 管理者ロールを ${role} に設定しました。\n\n👑 サーバー所有者: 常に管理可能\n🔐 ${role}: 管理者コマンドを使用可能\n👤 その他のメンバー: 管理者コマンドは使用不可`,
+          ephemeral:true
+        });
       }
 
       if (n === 'admin-role-status') {
         const g=guildData(store,interaction.guildId);
+        if(!hasConfiguredAdminRole(interaction)){
+          return interaction.reply({
+            content:'❌ この管理情報を確認できるのは、サーバー所有者または指定された管理者ロールのメンバーだけです。',
+            ephemeral:true
+          });
+        }
         return interaction.reply({
           content:g.adminRoleId
-            ? `🔐 管理者ロール: <@&${g.adminRoleId}>\nあなたの利用権限: ${hasConfiguredAdminRole(interaction)?'✅ あり':'❌ なし'}`
-            : '⚠️ 管理者ロールは未設定です。',
+            ? `🔐 **管理者設定**\nサーバー所有者: <@${interaction.guild.ownerId}>\n管理者ロール: <@&${g.adminRoleId}>\nあなたの利用権限: ✅ あり`
+            : `⚠️ 管理者ロールは未設定です。\nサーバー所有者 <@${interaction.guild.ownerId}> が \`/admin-role-set\` で設定してください。`,
           ephemeral:true
         });
       }

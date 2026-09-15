@@ -1,7 +1,7 @@
 {
-  "name": "discord-multibot-v5-5-admin-role",
-  "version": "5.5.0",
-  "description": "Discord MultiBot v5.3 - verification applications notify a designated approval channel.",
+  "name": "discord-multibot-v5-6-guild-owner-admin-role",
+  "version": "5.6.0",
+  "description": "Discord MultiBot v5.6 - guild owner controls the server admin role.",
   "type": "module",
   "main": "src/index.js",
   "scripts": {
