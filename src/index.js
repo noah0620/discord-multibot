@@ -1017,24 +1017,18 @@ AI生成機能は搭載していません。`
 
       if (n === 'weather-admin') {
         const g=guildData(store,interaction.guildId);
-        const registered=[...(g.weatherRegions || [])];
-
-        const areaStatus=Object.entries(WEATHER_AREAS).map(([area,prefs])=>{
-          const count=prefs.filter(p=>registered.includes(p)).length;
-          return `${count===prefs.length?'✅':count?'🟡':'⬜'} ${area}: ${count}/${prefs.length}`;
-        }).join('\n');
-
-        const regionText=registered.length ? registered.join(' / ') : '未登録';
-
-        const pages=splitDiscordBlocks(
-          `🔒 **天気管理者ページ**\nサーバー: **${interaction.guild?.name || interaction.guildId}**\n自動投稿: **${g.weatherAutoEnabled?'ON':'OFF'}**\n投稿時刻: **${g.weatherAutoTime || '07:00'}（日本時間）**\n投稿先: ${g.weatherChannelId?`<#${g.weatherChannelId}>`:'未設定'}\n登録数: **${registered.length}/47**\n\n**地方別登録状況**\n${areaStatus}\n\n**登録都道府県**`,
-          [regionText]
-        );
-
-        await interaction.reply({content:pages[0],ephemeral:true});
-        for(const page of pages.slice(1)){
-          await interaction.followUp({content:page,ephemeral:true});
+        const registered=new Set(g.weatherRegions||[]);
+        const areaLines=[];
+        for(const [areaName,prefs] of Object.entries(WEATHER_AREAS)){
+          const inArea=prefs.filter(p=>registered.has(p));
+          const missing=prefs.filter(p=>!registered.has(p));
+          areaLines.push(`**${areaName}　${inArea.length} / ${prefs.length}県**\n登録済み: ${inArea.length?inArea.join('、'):'なし'}${missing.length&&inArea.length?`\n未登録: ${missing.join('、')}`:''}`);
         }
+        const allRegistered=[...registered].filter(p=>PREFECTURES.some(([name])=>name===p));
+        const detailText=`🔒 **天気地域 管理者ページ**\n自動投稿: ${g.weatherAutoEnabled?'ON':'OFF'}\n投稿時刻: ${g.weatherAutoTime||'07:00'}（日本時間）\n投稿先: ${g.weatherChannelId?`<#${g.weatherChannelId}>`:'未設定'}\n合計登録: **${allRegistered.length} / 47都道府県**\n\n${areaLines.join('\n\n')}`;
+        const pages=splitDiscordBlocks(detailText,1900);
+        await interaction.reply({content:pages[0],ephemeral:true});
+        for(const page of pages.slice(1)) await interaction.followUp({content:page,ephemeral:true});
         return;
       }
 
