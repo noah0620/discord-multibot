@@ -116,6 +116,18 @@ export const commandData = [
     ))
     .addStringOption(o=>o.setName('value').setDescription('Discord ID').setRequired(true)),
 
+  new SlashCommandBuilder().setName('news-source-add').setDescription('【管理者】NEWS RSS/Atomソースと投稿先を追加')
+    .addStringOption(o=>o.setName('name').setDescription('表示名').setRequired(true))
+    .addStringOption(o=>o.setName('feed_url').setDescription('RSS/AtomフィードURL').setRequired(true))
+    .addStringOption(o=>o.setName('channel_url').setDescription('DiscordチャンネルURL').setRequired(true)),
+  new SlashCommandBuilder().setName('news-source-remove').setDescription('【管理者】NEWSソースを削除')
+    .addIntegerOption(o=>o.setName('id').setDescription('ソースID').setRequired(true)),
+  new SlashCommandBuilder().setName('news-list').setDescription('【管理者】NEWS設定一覧'),
+  new SlashCommandBuilder().setName('news-auto').setDescription('【管理者】NEWS自動通知ON/OFF')
+    .addBooleanOption(o=>o.setName('enabled').setDescription('ON/OFF').setRequired(true)),
+  new SlashCommandBuilder().setName('news-test').setDescription('【管理者】NEWS最新記事をテスト送信')
+    .addIntegerOption(o=>o.setName('id').setDescription('ソースID').setRequired(true)),
+
   new SlashCommandBuilder().setName('weather').setDescription('登録地域の天気を表示。地域指定も可能')
     .addStringOption(o=>o.setName('region').setDescription('省略時は登録済み地域をすべて表示').setAutocomplete(true)),
   new SlashCommandBuilder().setName('weather-register').setDescription('【管理者】天気地域を追加・削除')

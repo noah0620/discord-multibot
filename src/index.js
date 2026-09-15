@@ -10,10 +10,34 @@ import { searchRegionChoices, searchPrefectureChoices, PREFECTURES, WEATHER_AREA
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import ffmpegPath from 'ffmpeg-static';
+import Parser from 'rss-parser';
 
 assertConfig();
 const store = loadStore();
 const players = new Map();
+
+const rssParser=new Parser({timeout:15000,headers:{'User-Agent':'NoahXJP-Discord-NewsBot/1.0'}});
+function parseDiscordChannelUrl(raw,guildId){
+  try{
+    const u=new URL(raw);
+    if(!['discord.com','www.discord.com','discordapp.com','www.discordapp.com'].includes(u.hostname))return null;
+    const m=u.pathname.match(/^\/channels\/(\d+)\/(\d+)\/?$/);
+    return m&&m[1]===guildId?{guildId:m[1],channelId:m[2]}:null;
+  }catch{return null;}
+}
+function validNewsUrl(raw){try{return ['http:','https:'].includes(new URL(raw).protocol);}catch{return false;}}
+function newsItemKey(i){return String(i.guid||i.id||i.link||`${i.title||''}|${i.isoDate||i.pubDate||''}`);}
+function cleanNewsText(v,max=700){const t=String(v||'').replace(/<[^>]*>/g,' ').replace(/&nbsp;/g,' ').replace(/&amp;/g,'&').replace(/\s+/g,' ').trim();return t.length>max?`${t.slice(0,max-1)}…`:t;}
+function newsEmbed(source,item){
+  const e=new EmbedBuilder().setTitle(cleanNewsText(item.title||'新着ニュース',250))
+    .setDescription(cleanNewsText(item.contentSnippet||item.summary||item.content||'',700)||'新着記事が公開されました。')
+    .setFooter({text:`NEWS ALERT • ${source.name}`}).setTimestamp(item.isoDate||item.pubDate?new Date(item.isoDate||item.pubDate):new Date());
+  if(item.link&&validNewsUrl(item.link))e.setURL(item.link);
+  const image=item.enclosure?.url||item['media:content']?.url||item['media:thumbnail']?.url;
+  if(image&&validNewsUrl(image))e.setImage(image);
+  return e;
+}
+async function fetchNewsFeed(source){return rssParser.parseURL(source.feedUrl);}
 
 function isGuildOwner(interaction){
   return Boolean(interaction.guild && interaction.user?.id === interaction.guild.ownerId);
@@ -36,6 +60,7 @@ const ADMIN_COMMANDS=new Set([
   'autoreply-add','autoreply-remove','autoreply-list',
   'schedule-post','schedule-list','schedule-cancel',
   'moderation-rule','moderation-list','moderation-remove',
+  'news-source-add','news-source-remove','news-list','news-auto','news-test',
   'weather-register','weather-list','weather-admin','weather-auto','weather-channel','weather-channel-remove',
   'earthquake-register','earthquake-list','earthquake-auto',
   'diagnostics'
@@ -443,7 +468,10 @@ client.on(Events.InteractionCreate, async interaction => {
 8. 🛡️ **モデレーション**
 /moderation-rule /moderation-list /moderation-remove
 
-9. 🌤️ **47都道府県・地方・全国・複数地域天気**
+9. 📰 **NEWS ALERTS**
+/news-source-add /news-source-remove /news-list /news-auto /news-test
+
+10. 🌤️ **47都道府県・地方・全国・複数地域天気**
 /weather /weather-register /weather-list /weather-admin /weather-auto /weather-channel /weather-channel-remove
 
 10. 🚨 **天気とは独立した地震速報**
@@ -1012,6 +1040,53 @@ AI生成機能は搭載していません。`
         g[map[key]]=value;
         saveStore(store);
         return interaction.reply({content:'✅ 旧版互換設定を保存しました。',ephemeral:true});
+      }
+
+      if (n === 'news-source-add') {
+        const g=guildData(store,interaction.guildId);
+        const name=interaction.options.getString('name',true).trim();
+        const feedUrl=interaction.options.getString('feed_url',true).trim();
+        const channelUrl=interaction.options.getString('channel_url',true).trim();
+        if(!validNewsUrl(feedUrl))return interaction.reply({content:'❌ RSS/Atom URLが正しくありません。',ephemeral:true});
+        const parsed=parseDiscordChannelUrl(channelUrl,interaction.guildId);
+        if(!parsed)return interaction.reply({content:'❌ DiscordチャンネルURLが正しくないか、このサーバーのチャンネルではありません。',ephemeral:true});
+        const ch=interaction.guild.channels.cache.get(parsed.channelId)||await interaction.guild.channels.fetch(parsed.channelId).catch(()=>null);
+        if(!ch?.isTextBased())return interaction.reply({content:'❌ 指定チャンネルへ投稿できません。',ephemeral:true});
+        await interaction.deferReply({ephemeral:true});
+        let feed;
+        try{feed=await fetchNewsFeed({feedUrl});}catch(e){console.error(e);return interaction.editReply('❌ フィードを取得できません。通常の記事URLではなくRSS/Atom URLを指定してください。');}
+        const id=g.nextNewsSourceId++;
+        const source={id,name:name.slice(0,80),feedUrl,channelId:parsed.channelId,createdAt:new Date().toISOString()};
+        g.newsSources.push(source); g.newsSeen[id]=(feed.items||[]).slice(0,50).map(newsItemKey); saveStore(store);
+        return interaction.editReply(`✅ NEWSソース #${id} **${source.name}** を登録しました。\n投稿先: <#${source.channelId}>\n次の新着から通知します。`);
+      }
+      if (n === 'news-source-remove') {
+        const g=guildData(store,interaction.guildId),id=interaction.options.getInteger('id',true),source=g.newsSources.find(x=>x.id===id);
+        if(!source)return interaction.reply({content:'❌ NEWSソースIDが見つかりません。',ephemeral:true});
+        g.newsSources=g.newsSources.filter(x=>x.id!==id);delete g.newsSeen[id];saveStore(store);
+        return interaction.reply({content:`✅ #${id} ${source.name} を削除しました。`,ephemeral:true});
+      }
+      if (n === 'news-list') {
+        const g=guildData(store,interaction.guildId),lines=g.newsSources.map(s=>`**#${s.id} ${s.name}**\n投稿先: <#${s.channelId}>\nRSS: ${s.feedUrl}`);
+        const pages=splitDiscordBlocks(`📰 **NEWS ALERTS**\n自動通知: **${g.newsAutoEnabled?'ON':'OFF'}**\n登録: **${g.newsSources.length}件**`,lines,1900);
+        await interaction.reply({content:pages[0],ephemeral:true});for(const p of pages.slice(1))await interaction.followUp({content:p,ephemeral:true});return;
+      }
+      if (n === 'news-auto') {
+        const g=guildData(store,interaction.guildId),enabled=interaction.options.getBoolean('enabled',true);
+        if(enabled&&!g.newsSources.length)return interaction.reply({content:'❌ 先にNEWSソースを登録してください。',ephemeral:true});
+        g.newsAutoEnabled=enabled;saveStore(store);return interaction.reply({content:`📰 NEWS自動通知: **${enabled?'ON':'OFF'}**`,ephemeral:true});
+      }
+      if (n === 'news-test') {
+        const g=guildData(store,interaction.guildId),id=interaction.options.getInteger('id',true),source=g.newsSources.find(x=>x.id===id);
+        if(!source)return interaction.reply({content:'❌ NEWSソースIDが見つかりません。',ephemeral:true});
+        await interaction.deferReply({ephemeral:true});
+        try{
+          const feed=await fetchNewsFeed(source),item=feed.items?.[0];if(!item)return interaction.editReply('❌ 記事がありません。');
+          const ch=interaction.guild.channels.cache.get(source.channelId)||await interaction.guild.channels.fetch(source.channelId).catch(()=>null);
+          if(!ch?.isTextBased())return interaction.editReply('❌ 投稿先を取得できません。');
+          await ch.send({content:`📰 **${source.name} / テスト通知**`,embeds:[newsEmbed(source,item)]});
+          return interaction.editReply(`✅ <#${source.channelId}> に送信しました。`);
+        }catch(e){console.error(e);return interaction.editReply('❌ NEWS取得または投稿に失敗しました。');}
       }
 
       if (n === 'weather') {
@@ -1741,6 +1816,26 @@ setInterval(async()=>{
   }
   if(changed)saveStore(store);
 },15000);
+
+// NEWS ALERTS: RSS/Atomを60秒ごとに確認
+setInterval(async()=>{
+  for(const guild of client.guilds.cache.values()){
+    const g=guildData(store,guild.id);
+    if(!g.newsAutoEnabled||!g.newsSources?.length)continue;
+    g.newsSeen??={};
+    for(const source of g.newsSources){
+      try{
+        const feed=await fetchNewsFeed(source),items=(feed.items||[]).slice(0,20),seen=new Set(g.newsSeen[source.id]||[]);
+        const fresh=items.filter(i=>!seen.has(newsItemKey(i))).reverse();
+        if(!fresh.length)continue;
+        const ch=guild.channels.cache.get(source.channelId)||await guild.channels.fetch(source.channelId).catch(()=>null);
+        if(!ch?.isTextBased())continue;
+        for(const item of fresh.slice(-10))await ch.send({content:`📰 **${source.name} / 新着ニュース**`,embeds:[newsEmbed(source,item)]});
+        g.newsSeen[source.id]=[...new Set([...items.map(newsItemKey),...seen])].slice(0,100);saveStore(store);
+      }catch(e){console.error(`news watcher ${guild.id}/${source.id}`,e);}
+    }
+  }
+},60*1000);
 
 setInterval(async()=>{
   try{

@@ -55,6 +55,10 @@ export function guildData(store, guildId) {
     earthquakeChannelId: null,
     weatherChannelId: null,
     autoReplies: {},
+    newsAutoEnabled: false,
+    newsSources: [],
+    nextNewsSourceId: 1,
+    newsSeen: {},
     weatherRegions: [],
     weatherChannelRoutes: {},
     earthquakeRegions: [],
@@ -69,6 +73,10 @@ export function guildData(store, guildId) {
   g.weatherAutoEnabled ??= false;
   g.earthquakeAutoEnabled ??= false;
   g.minIntensity ??= 3;
+  g.newsAutoEnabled ??= false;
+  g.newsSources ??= [];
+  g.nextNewsSourceId ??= 1;
+  g.newsSeen ??= {};
   g.weatherRegions ??= [];
   g.weatherChannelRoutes ??= {};
   g.earthquakeRegions ??= [];
