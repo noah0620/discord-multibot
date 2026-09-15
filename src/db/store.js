@@ -46,6 +46,7 @@ export function guildData(store, guildId) {
   store.guilds[guildId] ??= {
     joinLogChannelId: null,
     leaveLogChannelId: null,
+    adminRoleId: null,
     verificationRoleId: null,
     verificationReviewChannelId: null,
     ticketCategoryId: null,
@@ -70,6 +71,7 @@ export function guildData(store, guildId) {
   g.weatherRegions ??= [];
   g.earthquakeRegions ??= [];
   g.autoReplies ??= {};
+  g.adminRoleId ??= null;
   g.verificationReviewChannelId ??= null;
   g.ticketCategoryId ??= null;
   g.ticketSupportRoleId ??= null;

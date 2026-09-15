@@ -15,6 +15,28 @@ assertConfig();
 const store = loadStore();
 const players = new Map();
 
+function hasConfiguredAdminRole(interaction){
+  if(!interaction.guildId)return false;
+  if(isBotOwner(interaction.user.id))return true;
+  const g=guildData(store,interaction.guildId);
+  return Boolean(g.adminRoleId && interaction.member?.roles?.cache?.has(g.adminRoleId));
+}
+
+const ADMIN_COMMANDS=new Set([
+  'shop-admin',
+  'verify-panel','verify-admin','verify-status','verify-settings',
+  'role-panel','role-add','role-list','role-remove',
+  'join-leave-settings','join-leave-status','guild-settings','guild-status','setting',
+  'ticket-panel','ticket-settings','ticket-status',
+  'autoreply-add','autoreply-remove','autoreply-list',
+  'schedule-post','schedule-list','schedule-cancel',
+  'moderation-rule','moderation-list','moderation-remove',
+  'weather-register','weather-list','weather-admin','weather-auto',
+  'earthquake-register','earthquake-list','earthquake-auto',
+  'diagnostics'
+]);
+
+
 function validHttpUrl(value) {
   try {
     const u = new URL(value);
@@ -368,6 +390,17 @@ client.on(Events.InteractionCreate, async interaction => {
     if (interaction.isChatInputCommand()) {
       const n = interaction.commandName;
 
+      if(ADMIN_COMMANDS.has(n) && !hasConfiguredAdminRole(interaction)){
+        const g=guildData(store,interaction.guildId);
+        return interaction.reply({
+          content:g.adminRoleId
+            ? `❌ 管理者ロール <@&${g.adminRoleId}> を持つメンバーのみ使用できます。`
+            : '❌ 管理者ロールが未設定です。BOTオーナーが `/admin-role-set` で設定してください。',
+          ephemeral:true
+        });
+      }
+
+
       if (n === 'ping') {
         return interaction.reply({
           content:`✅ BOTは正常にコマンドを受信しています。\nBOT: ${client.user.tag}\nBOT ID: ${client.user.id}\nGuild: ${interaction.guild?.name || 'DM'}\n時刻: ${new Date().toLocaleString('ja-JP',{timeZone:'Asia/Tokyo'})}`,
@@ -415,7 +448,7 @@ client.on(Events.InteractionCreate, async interaction => {
 /play /queue /pause /resume /skip /stop /nowplaying /volume
 
 12. 👑 **BOTオーナー機能**
-/owner-status
+/owner-status /admin-role-set /admin-role-status
 
 🔧 **動作診断**
 /diagnostics
@@ -431,6 +464,27 @@ AI生成機能は搭載していません。`
       if (n === 'owner-status') {
         return interaction.reply({ content:isBotOwner(interaction.user.id)?'✅ BOTオーナーです。':'ℹ️ BOTオーナーではありません。', ephemeral:true });
       }
+      if (n === 'admin-role-set') {
+        if(!isBotOwner(interaction.user.id)){
+          return interaction.reply({content:'❌ BOTオーナーのみ変更できます。',ephemeral:true});
+        }
+        const role=interaction.options.getRole('role',true);
+        if(role.id===interaction.guild.id)return interaction.reply({content:'❌ @everyone は設定できません。',ephemeral:true});
+        const g=guildData(store,interaction.guildId);
+        g.adminRoleId=role.id; saveStore(store);
+        return interaction.reply({content:`✅ 管理者ロールを ${role} に設定しました。`,ephemeral:true});
+      }
+
+      if (n === 'admin-role-status') {
+        const g=guildData(store,interaction.guildId);
+        return interaction.reply({
+          content:g.adminRoleId
+            ? `🔐 管理者ロール: <@&${g.adminRoleId}>\nあなたの利用権限: ${hasConfiguredAdminRole(interaction)?'✅ あり':'❌ なし'}`
+            : '⚠️ 管理者ロールは未設定です。',
+          ephemeral:true
+        });
+      }
+
       if (n === 'diagnostics') {
         const me=interaction.guild?.members?.me;
         const g=guildData(store,interaction.guildId);
@@ -1025,8 +1079,8 @@ AI生成機能は搭載していません。`
           areaLines.push(`**${areaName}　${inArea.length} / ${prefs.length}県**\n登録済み: ${inArea.length?inArea.join('、'):'なし'}${missing.length&&inArea.length?`\n未登録: ${missing.join('、')}`:''}`);
         }
         const allRegistered=[...registered].filter(p=>PREFECTURES.some(([name])=>name===p));
-        const detailText=`🔒 **天気地域 管理者ページ**\n自動投稿: ${g.weatherAutoEnabled?'ON':'OFF'}\n投稿時刻: ${g.weatherAutoTime||'07:00'}（日本時間）\n投稿先: ${g.weatherChannelId?`<#${g.weatherChannelId}>`:'未設定'}\n合計登録: **${allRegistered.length} / 47都道府県**\n\n${areaLines.join('\n\n')}`;
-        const pages=splitDiscordBlocks(detailText,1900);
+        const header=`🔒 **天気地域 管理者ページ**\n自動投稿: ${g.weatherAutoEnabled?'ON':'OFF'}\n投稿時刻: ${g.weatherAutoTime||'07:00'}（日本時間）\n投稿先: ${g.weatherChannelId?`<#${g.weatherChannelId}>`:'未設定'}\n合計登録: **${allRegistered.length} / 47都道府県**`;
+        const pages=splitDiscordBlocks(header,areaLines,1900);
         await interaction.reply({content:pages[0],ephemeral:true});
         for(const page of pages.slice(1)) await interaction.followUp({content:page,ephemeral:true});
         return;
@@ -1278,8 +1332,8 @@ ${url}`)],
       }
 
       if (kind === 'verifyadmin') {
-        if(!interaction.memberPermissions?.has(PermissionFlagsBits.ManageGuild) && !isBotOwner(interaction.user.id)){
-          return interaction.reply({content:'❌ 管理者のみ操作できます。',ephemeral:true});
+        if(!hasConfiguredAdminRole(interaction)){
+          return interaction.reply({content:'❌ 指定された管理者ロールが必要です。',ephemeral:true});
         }
 
         const req=store.verificationRequests?.[a];

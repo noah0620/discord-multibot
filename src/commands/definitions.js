@@ -4,8 +4,10 @@ export const commandData = [
   new SlashCommandBuilder().setName('help').setDescription('BOTの機能一覧を表示'),
   new SlashCommandBuilder().setName('ping').setDescription('BOT応答確認'),
   new SlashCommandBuilder().setName('owner-status').setDescription('BOTオーナー判定を確認'),
-  new SlashCommandBuilder().setName('diagnostics').setDescription('【管理者】BOT権限・設定の動作診断')
-    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
+  new SlashCommandBuilder().setName('admin-role-set').setDescription('【BOTオーナー】管理者ロールを設定')
+    .addRoleOption(o=>o.setName('role').setDescription('管理者ロール').setRequired(true)),
+  new SlashCommandBuilder().setName('admin-role-status').setDescription('管理者ロール設定を確認'),
+  new SlashCommandBuilder().setName('diagnostics').setDescription('【管理者】BOT権限・設定の動作診断'),
 
   new SlashCommandBuilder().setName('shop-create').setDescription('自分の自動販売機を作成')
     .addStringOption(o=>o.setName('name').setDescription('自動販売機名').setRequired(true))
@@ -19,8 +21,7 @@ export const commandData = [
     .addChannelOption(o=>o.setName('order_channel').setDescription('注文通知先').addChannelTypes(ChannelType.GuildText)),
   new SlashCommandBuilder().setName('shop-delete').setDescription('自動販売機を停止')
     .addIntegerOption(o=>o.setName('shop_id').setDescription('自販機ID').setRequired(true)),
-  new SlashCommandBuilder().setName('shop-admin').setDescription('【管理者】自販機・注文状況を確認')
-    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
+  new SlashCommandBuilder().setName('shop-admin').setDescription('【管理者】自販機・注文状況を確認'),
 
   new SlashCommandBuilder().setName('product-add').setDescription('自動販売機に商品追加')
     .addIntegerOption(o=>o.setName('shop_id').setDescription('自販機ID').setRequired(true))
@@ -53,21 +54,15 @@ export const commandData = [
 
   new SlashCommandBuilder().setName('verify-panel').setDescription('認証パネルを設置')
     .addRoleOption(o=>o.setName('role').setDescription('認証後に付与するロール').setRequired(true))
-    .addChannelOption(o=>o.setName('approval_channel').setDescription('認証申請の承認通知を送るチャンネル').setRequired(true).addChannelTypes(ChannelType.GuildText))
-    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
-  new SlashCommandBuilder().setName('verify-admin').setDescription('【管理者】認証申請を確認・承認')
-    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
-  new SlashCommandBuilder().setName('verify-status').setDescription('【管理者】認証パネル設定を確認')
-    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
+    .addChannelOption(o=>o.setName('approval_channel').setDescription('認証申請の承認通知を送るチャンネル').setRequired(true).addChannelTypes(ChannelType.GuildText)),
+  new SlashCommandBuilder().setName('verify-admin').setDescription('【管理者】認証申請を確認・承認'),
+  new SlashCommandBuilder().setName('verify-status').setDescription('【管理者】認証パネル設定を確認'),
   new SlashCommandBuilder().setName('verify-settings').setDescription('【管理者】認証申請の承認通知先を変更')
-    .addChannelOption(o=>o.setName('approval_channel').setDescription('承認通知チャンネル').setRequired(true).addChannelTypes(ChannelType.GuildText))
-    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
+    .addChannelOption(o=>o.setName('approval_channel').setDescription('承認通知チャンネル').setRequired(true).addChannelTypes(ChannelType.GuildText)),
   new SlashCommandBuilder().setName('join-leave-settings').setDescription('【管理者】入退室通知チャンネルを設定')
     .addChannelOption(o=>o.setName('join').setDescription('参加通知チャンネル').addChannelTypes(ChannelType.GuildText))
-    .addChannelOption(o=>o.setName('leave').setDescription('退出通知チャンネル').addChannelTypes(ChannelType.GuildText))
-    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
-  new SlashCommandBuilder().setName('join-leave-status').setDescription('【管理者】入退室通知設定を確認')
-    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
+    .addChannelOption(o=>o.setName('leave').setDescription('退出通知チャンネル').addChannelTypes(ChannelType.GuildText)),
+  new SlashCommandBuilder().setName('join-leave-status').setDescription('【管理者】入退室通知設定を確認'),
 
   new SlashCommandBuilder().setName('role-panel').setDescription('最大5ロールの選択パネル')
     .addRoleOption(o=>o.setName('role1').setDescription('ロール1（省略時は保存済みロール）'))
@@ -79,48 +74,36 @@ export const commandData = [
     .addRoleOption(o=>o.setName('role4').setDescription('ロール4'))
     .addStringOption(o=>o.setName('label4').setDescription('表示名4'))
     .addRoleOption(o=>o.setName('role5').setDescription('ロール5'))
-    .addStringOption(o=>o.setName('label5').setDescription('表示名5'))
-    .setDefaultMemberPermissions(PermissionFlagsBits.ManageRoles),
+    .addStringOption(o=>o.setName('label5').setDescription('表示名5')),
   new SlashCommandBuilder().setName('role-add').setDescription('ロールパネル用ロールを保存')
     .addStringOption(o=>o.setName('label').setDescription('表示名').setRequired(true))
-    .addRoleOption(o=>o.setName('role').setDescription('ロール').setRequired(true))
-    .setDefaultMemberPermissions(PermissionFlagsBits.ManageRoles),
-  new SlashCommandBuilder().setName('role-list').setDescription('保存済みロール一覧')
-    .setDefaultMemberPermissions(PermissionFlagsBits.ManageRoles),
+    .addRoleOption(o=>o.setName('role').setDescription('ロール').setRequired(true)),
+  new SlashCommandBuilder().setName('role-list').setDescription('保存済みロール一覧'),
   new SlashCommandBuilder().setName('role-remove').setDescription('保存済みロールを削除')
-    .addRoleOption(o=>o.setName('role').setDescription('ロール').setRequired(true))
-    .setDefaultMemberPermissions(PermissionFlagsBits.ManageRoles),
+    .addRoleOption(o=>o.setName('role').setDescription('ロール').setRequired(true)),
 
-  new SlashCommandBuilder().setName('ticket-panel').setDescription('チケット作成パネル')
-    .setDefaultMemberPermissions(PermissionFlagsBits.ManageChannels),
+  new SlashCommandBuilder().setName('ticket-panel').setDescription('チケット作成パネル'),
   new SlashCommandBuilder().setName('ticket-settings').setDescription('チケットカテゴリ・サポートロール設定')
     .addChannelOption(o=>o.setName('category').setDescription('作成先カテゴリ').addChannelTypes(ChannelType.GuildCategory))
-    .addRoleOption(o=>o.setName('support_role').setDescription('サポートロール'))
-    .setDefaultMemberPermissions(PermissionFlagsBits.ManageChannels),
-  new SlashCommandBuilder().setName('ticket-status').setDescription('チケット設定を確認')
-    .setDefaultMemberPermissions(PermissionFlagsBits.ManageChannels),
+    .addRoleOption(o=>o.setName('support_role').setDescription('サポートロール')),
+  new SlashCommandBuilder().setName('ticket-status').setDescription('チケット設定を確認'),
 
   new SlashCommandBuilder().setName('autoreply-add').setDescription('自動返信追加')
     .addStringOption(o=>o.setName('keyword').setDescription('キーワード').setRequired(true))
     .addStringOption(o=>o.setName('reply').setDescription('返信内容').setRequired(true))
     .addStringOption(o=>o.setName('mode').setDescription('判定方法').addChoices(
       {name:'部分一致',value:'contains'},{name:'完全一致',value:'exact'}
-    ))
-    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
+    )),
   new SlashCommandBuilder().setName('autoreply-remove').setDescription('自動返信削除')
-    .addStringOption(o=>o.setName('keyword').setDescription('キーワード').setRequired(true))
-    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
-  new SlashCommandBuilder().setName('autoreply-list').setDescription('登録済み自動返信一覧')
-    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
+    .addStringOption(o=>o.setName('keyword').setDescription('キーワード').setRequired(true)),
+  new SlashCommandBuilder().setName('autoreply-list').setDescription('登録済み自動返信一覧'),
 
   new SlashCommandBuilder().setName('guild-settings').setDescription('通知先を設定')
     .addChannelOption(o=>o.setName('join_log').setDescription('参加通知').addChannelTypes(ChannelType.GuildText))
     .addChannelOption(o=>o.setName('leave_log').setDescription('退出通知').addChannelTypes(ChannelType.GuildText))
     .addChannelOption(o=>o.setName('earthquake').setDescription('地震通知').addChannelTypes(ChannelType.GuildText))
-    .addChannelOption(o=>o.setName('weather').setDescription('天気通知').addChannelTypes(ChannelType.GuildText))
-    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
-  new SlashCommandBuilder().setName('guild-status').setDescription('サーバー通知設定を確認')
-    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
+    .addChannelOption(o=>o.setName('weather').setDescription('天気通知').addChannelTypes(ChannelType.GuildText)),
+  new SlashCommandBuilder().setName('guild-status').setDescription('サーバー通知設定を確認'),
   new SlashCommandBuilder().setName('setting').setDescription('旧版互換: サーバー共通設定をIDで保存')
     .addStringOption(o=>o.setName('key').setDescription('設定項目').setRequired(true).addChoices(
       {name:'認証ロールID',value:'verification_role_id'},
@@ -131,8 +114,7 @@ export const commandData = [
       {name:'地震チャンネルID',value:'earthquake_channel_id'},
       {name:'天気チャンネルID',value:'weather_channel_id'}
     ))
-    .addStringOption(o=>o.setName('value').setDescription('Discord ID').setRequired(true))
-    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
+    .addStringOption(o=>o.setName('value').setDescription('Discord ID').setRequired(true)),
 
   new SlashCommandBuilder().setName('weather').setDescription('登録地域の天気を表示。地域指定も可能')
     .addStringOption(o=>o.setName('region').setDescription('省略時は登録済み地域をすべて表示').setAutocomplete(true)),
@@ -140,27 +122,20 @@ export const commandData = [
     .addStringOption(o=>o.setName('action').setDescription('操作').setRequired(true).addChoices(
       {name:'追加',value:'add'},{name:'削除',value:'remove'},{name:'全削除',value:'clear'}
     ))
-    .addStringOption(o=>o.setName('region').setDescription('47都道府県・地方・全国').setAutocomplete(true))
-    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
-  new SlashCommandBuilder().setName('weather-admin').setDescription('【管理者】天気地域登録の詳細を表示')
-    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
-  new SlashCommandBuilder().setName('weather-list').setDescription('【管理者】登録済み天気地域を表示')
-    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
+    .addStringOption(o=>o.setName('region').setDescription('47都道府県・地方・全国').setAutocomplete(true)),
+  new SlashCommandBuilder().setName('weather-admin').setDescription('【管理者】天気地域登録の詳細を表示'),
+  new SlashCommandBuilder().setName('weather-list').setDescription('【管理者】登録済み天気地域を表示'),
   new SlashCommandBuilder().setName('weather-auto').setDescription('【管理者】サーバーごとの自動天気投稿時刻を設定')
     .addBooleanOption(o=>o.setName('enabled').setDescription('ON/OFF').setRequired(true))
-    .addStringOption(o=>o.setName('time').setDescription('毎日の投稿時刻 例: 07:00 / 18:30'))
-    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
+    .addStringOption(o=>o.setName('time').setDescription('毎日の投稿時刻 例: 07:00 / 18:30')),
 
   new SlashCommandBuilder().setName('earthquake').setDescription('最新地震情報'),
   new SlashCommandBuilder().setName('earthquake-register').setDescription('地震通知地域を追加')
     .addStringOption(o=>o.setName('region').setDescription('地域').setAutocomplete(true).setRequired(true))
-    .addIntegerOption(o=>o.setName('min_intensity').setDescription('最低震度 1〜7').setMinValue(1).setMaxValue(7))
-    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
-  new SlashCommandBuilder().setName('earthquake-list').setDescription('登録済み地震地域')
-    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
+    .addIntegerOption(o=>o.setName('min_intensity').setDescription('最低震度 1〜7').setMinValue(1).setMaxValue(7)),
+  new SlashCommandBuilder().setName('earthquake-list').setDescription('登録済み地震地域'),
   new SlashCommandBuilder().setName('earthquake-auto').setDescription('自動地震速報ON/OFF')
-    .addBooleanOption(o=>o.setName('enabled').setDescription('ON/OFF').setRequired(true))
-    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
+    .addBooleanOption(o=>o.setName('enabled').setDescription('ON/OFF').setRequired(true)),
 
   new SlashCommandBuilder().setName('schedule-post').setDescription('予約投稿')
     .addChannelOption(o=>o.setName('channel').setDescription('投稿先').setRequired(true).addChannelTypes(ChannelType.GuildText))

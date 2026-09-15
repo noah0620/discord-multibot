@@ -1,11 +1,28 @@
-# Discord MultiBot v5.4
+# Discord MultiBot v5.5 管理者ロール版
 
-`/weather-admin` で地方ごとの実登録県を表示します。
+BOTオーナーがサーバーごとに管理者ロールを設定できます。
 
-- 地方ごとの「登録数 / 全県数」
-- 登録済み都道府県一覧
-- 一部だけ登録されている地方は未登録県も表示
-- 合計「x / 47都道府県」
-- 管理者だけにEphemeral表示
+```text
+/admin-role-set role:@BOT管理者
+```
 
-一般メンバー向け `/weather` には管理詳細を表示しません。
+以後、認証管理、ロールパネル管理、入退室設定、チケット設定、自動返信管理、
+予約投稿、モデレーション、天気・地震設定、管理ページ、診断などは、
+その管理者ロールを持つメンバーとBOTオーナーだけが使用できます。
+
+```text
+/admin-role-status
+```
+
+で現在の設定を確認できます。
+
+一般ユーザー向けの天気表示、地震表示、音楽、購入などは制限しません。
+認証通知の「承認する / 却下する」ボタンも管理者ロールで制限します。
+
+更新:
+```powershell
+cd C:\NoahXJP-site\Discord\discord-multibot-v5.5-admin-role
+npm install
+npm run deploy-commands
+npm start
+```

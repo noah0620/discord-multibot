@@ -1,6 +1,6 @@
 {
-  "name": "discord-multibot-v5-4-weather-region-details",
-  "version": "5.4.0",
+  "name": "discord-multibot-v5-5-admin-role",
+  "version": "5.5.0",
   "description": "Discord MultiBot v5.3 - verification applications notify a designated approval channel.",
   "type": "module",
   "main": "src/index.js",
