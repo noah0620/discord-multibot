@@ -1,27 +1,32 @@
-# Discord MultiBot v5.8 NEWS ALERTS 統合版
+# Discord MultiBot v5.11 ZIP・URL販売対応版
 
-v5.7の全機能を維持し、RSS/Atomニュース自動通知を追加。
+v5.10までの機能を維持。
 
-設定:
-1. Discord投稿先チャンネルを右クリック → リンクをコピー
-2. `/news-source-add name:ニュース名 feed_url:RSS_URL channel_url:DiscordチャンネルURL`
-3. `/news-auto enabled:True`
+## 自動販売機の販売データ方式
+`/product-add` / `/product-edit` で以下を選択できます。
 
-管理:
-- `/news-list`
-- `/news-test id:1`
-- `/news-source-remove id:1`
+- `delivery_mode: ZIPファイル`
+  - `zip_file` に `.zip` をDiscord添付
+  - 支払い確認完了後、購入者DMへZIPの取得URLを送信
+- `delivery_mode: ギガファイル便URL`
+  - `gigafile_url` と `url_expiry_days` を設定
+  - 残り24時間以内で販売者へURL更新通知
+- `delivery_mode: 通常URL`
+  - `download_url` を設定
+  - 支払い確認完了後に購入者へURLを送信
 
-約60秒ごとに新着を確認し、未投稿の記事だけ指定チャンネルへEmbed通知します。
-ソースごとに別チャンネルURLを設定可能です。
-登録時点の記事は既読扱いにするため、過去記事を一斉投稿しません。
+商品選択画面には受取方法を表示しますが、購入前に実際のダウンロードURLは公開しません。
 
-`feed_url` は通常の記事ページではなくRSS/AtomフィードURLを指定してください。
-各配信元のRSS利用条件に従って利用してください。
+### ギガファイル便
+BOTがギガファイル便へファイルを自動アップロードする機能ではありません。
+販売者がギガファイル便で発行したURLを商品へ登録します。
 
-更新:
+### ZIP添付について
+ZIPはDiscordの添付URLを保存する方式です。Discord側の添付サイズ上限が適用されます。
+長期販売や大容量データはギガファイル便URL方式を推奨します。
+
 ```powershell
-cd C:\NoahXJP-site\Discord\discord-multibot-v5.8-news-alerts
+cd C:\NoahXJP-site\Discord\discord-multibot-v5.11-zip-url-sales
 npm install
 npm run deploy-commands
 npm start

@@ -1,7 +1,7 @@
 import {
   Client, GatewayIntentBits, Partials, Events, EmbedBuilder,
   ActionRowBuilder, ButtonBuilder, ButtonStyle, ModalBuilder,
-  TextInputBuilder, TextInputStyle, ChannelType, PermissionFlagsBits
+  TextInputBuilder, TextInputStyle, ChannelType, PermissionFlagsBits, StringSelectMenuBuilder
 } from 'discord.js';
 import { joinVoiceChannel, createAudioPlayer, createAudioResource, AudioPlayerStatus, StreamType } from '@discordjs/voice';
 import { config, assertConfig, isBotOwner } from './config.js';
@@ -39,6 +39,47 @@ function newsEmbed(source,item){
 }
 async function fetchNewsFeed(source){return rssParser.parseURL(source.feedUrl);}
 
+const SOCIAL_RSS_BRIDGE=(process.env.SOCIAL_RSS_BRIDGE_URL||'https://rsshub.app').replace(/\/+$/,'');
+
+function socialUsername(platform,profileUrl){
+  try{
+    const u=new URL(profileUrl);
+    const parts=u.pathname.split('/').filter(Boolean);
+    if(platform==='twitter'){
+      if(!['x.com','www.x.com','twitter.com','www.twitter.com'].includes(u.hostname))return null;
+      return parts[0]?.replace(/^@/,'')||null;
+    }
+    if(platform==='instagram'){
+      if(!['instagram.com','www.instagram.com'].includes(u.hostname))return null;
+      return parts[0]?.replace(/^@/,'')||null;
+    }
+    return null;
+  }catch{return null;}
+}
+
+async function resolveSocialFeed(platform,profileUrl,overrideRss=''){
+  if(overrideRss){
+    if(!validNewsUrl(overrideRss))throw new Error('RSS URLが不正です');
+    return overrideRss;
+  }
+  const u=new URL(profileUrl);
+  if(platform==='youtube'){
+    if(!['youtube.com','www.youtube.com','m.youtube.com'].includes(u.hostname))throw new Error('YouTubeプロフィールURLではありません');
+    const channelMatch=u.pathname.match(/^\/channel\/(UC[\w-]+)/);
+    if(channelMatch)return `https://www.youtube.com/feeds/videos.xml?channel_id=${channelMatch[1]}`;
+    const html=await fetch(profileUrl,{headers:{'User-Agent':'Mozilla/5.0'}}).then(r=>{if(!r.ok)throw new Error(`YouTube HTTP ${r.status}`);return r.text();});
+    const match=html.match(/"channelId":"(UC[\w-]+)"/)||html.match(/channel_id=(UC[\w-]+)/);
+    if(!match)throw new Error('YouTubeチャンネルIDを取得できません');
+    return `https://www.youtube.com/feeds/videos.xml?channel_id=${match[1]}`;
+  }
+  const username=socialUsername(platform,profileUrl);
+  if(!username)throw new Error('プロフィールURLからユーザー名を取得できません');
+  if(platform==='twitter')return `${SOCIAL_RSS_BRIDGE}/twitter/user/${encodeURIComponent(username)}`;
+  if(platform==='instagram')return `${SOCIAL_RSS_BRIDGE}/instagram/user/${encodeURIComponent(username)}`;
+  throw new Error('未対応SNSです');
+}
+
+
 function isGuildOwner(interaction){
   return Boolean(interaction.guild && interaction.user?.id === interaction.guild.ownerId);
 }
@@ -60,6 +101,7 @@ const ADMIN_COMMANDS=new Set([
   'autoreply-add','autoreply-remove','autoreply-list',
   'schedule-post','schedule-list','schedule-cancel',
   'moderation-rule','moderation-list','moderation-remove',
+  'social-source-add','social-source-remove','social-list','social-test',
   'news-source-add','news-source-remove','news-list','news-auto','news-test',
   'weather-register','weather-list','weather-admin','weather-auto','weather-channel','weather-channel-remove',
   'earthquake-register','earthquake-list','earthquake-auto',
@@ -468,7 +510,10 @@ client.on(Events.InteractionCreate, async interaction => {
 8. 🛡️ **モデレーション**
 /moderation-rule /moderation-list /moderation-remove
 
-9. 📰 **NEWS ALERTS**
+9. 📡 **SNS最新情報**
+/social-source-add /social-source-remove /social-list /social-test
+
+10. 📰 **NEWS ALERTS**
 /news-source-add /news-source-remove /news-list /news-auto /news-test
 
 10. 🌤️ **47都道府県・地方・全国・複数地域天気**
@@ -567,6 +612,7 @@ AI生成機能は搭載していません。`
           name:interaction.options.getString('name',true),
           managerRoleId:interaction.options.getRole('manager_role')?.id || null,
           orderChannelId:interaction.options.getChannel('order_channel')?.id || interaction.channelId,
+          salesChannelId:interaction.options.getChannel('sales_channel')?.id || null,
           active:true,
           products:[]
         };
@@ -597,11 +643,13 @@ AI生成機能は搭載していません。`
         const name=interaction.options.getString('name');
         const role=interaction.options.getRole('manager_role');
         const ch=interaction.options.getChannel('order_channel');
-        if(!name&&!role&&!ch)return interaction.reply({content:'❌ 変更する項目を1つ以上指定してください。',ephemeral:true});
+        const salesCh=interaction.options.getChannel('sales_channel');
+        if(!name&&!role&&!ch&&!salesCh)return interaction.reply({content:'❌ 変更する項目を1つ以上指定してください。',ephemeral:true});
 
         if(name)shop.name=name.trim();
         if(role)shop.managerRoleId=role.id;
         if(ch)shop.orderChannelId=ch.id;
+        if(salesCh)shop.salesChannelId=salesCh.id;
         saveStore(store);
         return interaction.reply({content:'✅ 自販機設定を更新しました。',ephemeral:true});
       }
@@ -643,12 +691,32 @@ AI生成機能は搭載していません。`
         if(!shop||shop.guildId!==interaction.guildId||shop.active===false)return interaction.reply({content:'❌ 自販機が見つかりません。',ephemeral:true});
         if(!isShopManager(interaction,shop))return interaction.reply({content:'❌ 管理権限がありません。',ephemeral:true});
 
+        const addedZip=interaction.options.getAttachment('zip_file');
+        const addedDownloadUrl=interaction.options.getString('download_url');
+        const addedGiga=interaction.options.getString('gigafile_url');
+        const requestedMode=interaction.options.getString('delivery_mode');
+        if(addedZip && !addedZip.name?.toLowerCase().endsWith('.zip')){
+          return interaction.reply({content:'❌ 販売ファイルは .zip を添付してください。',ephemeral:true});
+        }
+        if(requestedMode==='zip' && !addedZip)return interaction.reply({content:'❌ ZIP販売を選択した場合は `zip_file` を添付してください。',ephemeral:true});
+        if(requestedMode==='gigafile' && !addedGiga)return interaction.reply({content:'❌ ギガファイル便販売を選択した場合は `gigafile_url` を設定してください。',ephemeral:true});
+        if(requestedMode==='url' && !addedDownloadUrl)return interaction.reply({content:'❌ URL販売を選択した場合は `download_url` を設定してください。',ephemeral:true});
+
         const p={
           id:Date.now().toString(36),
           name:interaction.options.getString('name',true),
           price:interaction.options.getInteger('price',true),
           stock:interaction.options.getInteger('stock',true),
           description:interaction.options.getString('description') || '',
+          imageUrl:interaction.options.getString('image_url') || '',
+          deliveryMode:interaction.options.getString('delivery_mode') || (interaction.options.getAttachment('zip_file')?'zip':interaction.options.getString('gigafile_url')?'gigafile':interaction.options.getString('download_url')?'url':'none'),
+          zipFile:interaction.options.getAttachment('zip_file') ? {
+            url:interaction.options.getAttachment('zip_file').url,
+            name:interaction.options.getAttachment('zip_file').name,
+            size:interaction.options.getAttachment('zip_file').size,
+            contentType:interaction.options.getAttachment('zip_file').contentType||''
+          } : null,
+          downloadUrl:interaction.options.getString('download_url') || '',
           delivery:interaction.options.getString('delivery') || '',
           deliveryFileUrl:interaction.options.getString('delivery_file_url') || '',
           roleId:interaction.options.getRole('role')?.id || null,
@@ -666,7 +734,7 @@ AI生成機能は搭載していません。`
         if(!isShopManager(interaction,shop))return interaction.reply({content:'❌ 商品一覧を見る権限がありません。',ephemeral:true});
 
         const products=shop.products||[];
-        const lines=products.map(p=>`\`${p.id}\` ${p.active===false?'🛑':'✅'} **${p.name}** / ¥${Number(p.price).toLocaleString()} / 在庫:${p.stock<0?'∞':p.stock}${p.roleId?` / 付与:<@&${p.roleId}>`:''}`);
+        const lines=products.map(p=>`\`${p.id}\` ${p.active===false?'🛑':'✅'} **${p.name}** / ¥${Number(p.price).toLocaleString()} / 在庫:${p.stock<0?'∞':p.stock}${p.imageUrl?' / 🖼️画像あり':''}${p.deliveryMode?` / 配布:${p.deliveryMode}`:''}${p.roleId?` / 付与:<@&${p.roleId}>`:''}`);
         return interaction.reply({content:lines.join('\n')||'商品はありません。',ephemeral:true});
       }
 
@@ -683,6 +751,10 @@ AI生成機能は搭載していません。`
         const price=interaction.options.getInteger('price');
         const stock=interaction.options.getInteger('stock');
         const description=interaction.options.getString('description');
+        const imageUrl=interaction.options.getString('image_url');
+        const deliveryMode=interaction.options.getString('delivery_mode');
+        const zipFile=interaction.options.getAttachment('zip_file');
+        const downloadUrl=interaction.options.getString('download_url');
         const delivery=interaction.options.getString('delivery');
         const fileUrl=interaction.options.getString('delivery_file_url');
         const role=interaction.options.getRole('role');
@@ -691,12 +763,36 @@ AI生成機能は搭載していません。`
         if(price!==null)p.price=price;
         if(stock!==null)p.stock=stock;
         if(description!==null)p.description=description;
+        if(imageUrl!==null)p.imageUrl=imageUrl;
+        if(deliveryMode!==null)p.deliveryMode=deliveryMode;
+        if(zipFile){
+          if(!zipFile.name?.toLowerCase().endsWith('.zip'))return interaction.reply({content:'❌ ZIPファイル（.zip）を添付してください。',ephemeral:true});
+          p.zipFile={url:zipFile.url,name:zipFile.name,size:zipFile.size,contentType:zipFile.contentType||''};
+          p.deliveryMode='zip';
+        }
+        if(downloadUrl!==null){p.downloadUrl=downloadUrl;p.deliveryMode=deliveryMode||'url';}
         if(delivery!==null)p.delivery=delivery;
         if(fileUrl!==null)p.deliveryFileUrl=fileUrl;
         if(role)p.roleId=role.id;
 
         saveStore(store);
         return interaction.reply({content:`✅ 商品 \`${p.id}\`「${p.name}」を更新しました。`,ephemeral:true});
+      }
+
+      if (n === 'product-url-update') {
+        const shop=store.shops[interaction.options.getInteger('shop_id')];
+        if(!shop||shop.guildId!==interaction.guildId)return interaction.reply({content:'❌ 自販機が見つかりません。',ephemeral:true});
+        if(!isShopManager(interaction,shop))return interaction.reply({content:'❌ 管理権限がありません。',ephemeral:true});
+        const p=(shop.products||[]).find(x=>x.id===interaction.options.getString('product_id',true));
+        if(!p)return interaction.reply({content:'❌ 商品が見つかりません。',ephemeral:true});
+        const url=interaction.options.getString('gigafile_url',true).trim();
+        const days=interaction.options.getInteger('url_expiry_days',true);
+        if(!/^https:\/\/(?:www\.)?gigafile\.nu\//i.test(url))return interaction.reply({content:'❌ ギガファイル便URLを指定してください。',ephemeral:true});
+        p.gigafileUrl=url;
+        p.gigafileExpiresAt=new Date(Date.now()+days*86400000).toISOString();
+        p.gigafileExpiryNotifiedAt=null;
+        saveStore(store);
+        return interaction.reply({content:`✅ **${p.name}** のURLのみ更新しました。期限: **${days}日後**`,ephemeral:true});
       }
 
       if (n === 'product-remove') {
@@ -730,21 +826,22 @@ AI生成機能は搭載していません。`
         if(!shop||shop.guildId!==interaction.guildId||shop.active===false)return interaction.reply({content:'❌ 自販機が見つかりません。',ephemeral:true});
         if(!isShopManager(interaction,shop))return interaction.reply({content:'❌ 管理権限がありません。',ephemeral:true});
 
-        const products=(shop.products||[]).filter(p=>p.active!==false && p.stock!==0).slice(0,5);
+        const products=(shop.products||[]).filter(p=>p.active!==false && p.stock!==0).slice(0,25);
         if(!products.length)return interaction.reply({content:'❌ 販売可能な商品がありません。',ephemeral:true});
 
-        const rows=products.map(p=>
-          new ActionRowBuilder().addComponents(
-            new ButtonBuilder()
-              .setCustomId(`buy:${shop.id}:${p.id}`)
-              .setLabel(`${p.name} ¥${p.price}${p.stock<0?' / 在庫∞':` / 在庫${p.stock}`}`.slice(0,80))
-              .setStyle(ButtonStyle.Success)
-          )
-        );
-        return interaction.reply({
-          embeds:[new EmbedBuilder().setTitle(`🛒 ${shop.name}`).setDescription('購入する商品を選択してください。')],
-          components:rows
-        });
+        const select=new StringSelectMenuBuilder()
+          .setCustomId(`shopselect:${shop.id}`)
+          .setPlaceholder('購入する商品を選択してください')
+          .addOptions(products.map(p=>({
+            label:p.name.slice(0,100),
+            description:`¥${Number(p.price).toLocaleString()} / 在庫 ${p.stock<0?'∞':p.stock}`.slice(0,100),
+            value:p.id
+          })));
+        const embed=new EmbedBuilder()
+          .setTitle(`🛒 ${shop.name}`)
+          .setDescription('下のメニューから商品を選択すると、商品画像・説明・価格を確認して購入できます。')
+          .setFooter({text:`販売者: ${shop.ownerId}`});
+        return interaction.reply({embeds:[embed],components:[new ActionRowBuilder().addComponents(select)]});
       }
 
       if (n === 'verify-panel') {
@@ -1040,6 +1137,59 @@ AI生成機能は搭載していません。`
         g[map[key]]=value;
         saveStore(store);
         return interaction.reply({content:'✅ 旧版互換設定を保存しました。',ephemeral:true});
+      }
+
+      if (n === 'social-source-add') {
+        const g=guildData(store,interaction.guildId);
+        const platform=interaction.options.getString('platform',true);
+        const profileUrl=interaction.options.getString('profile_url',true).trim();
+        const channelUrl=interaction.options.getString('channel_url',true).trim();
+        const override=interaction.options.getString('rss_url')?.trim()||'';
+        if(!validNewsUrl(profileUrl))return interaction.reply({content:'❌ プロフィールURLが正しくありません。',ephemeral:true});
+        const parsed=parseDiscordChannelUrl(channelUrl,interaction.guildId);
+        if(!parsed)return interaction.reply({content:'❌ DiscordチャンネルURLが正しくないか、このサーバーのURLではありません。',ephemeral:true});
+        await interaction.deferReply({ephemeral:true});
+        try{
+          const feedUrl=await resolveSocialFeed(platform,profileUrl,override);
+          const feed=await rssParser.parseURL(feedUrl);
+          const id=g.nextSocialSourceId++;
+          const source={id,platform,profileUrl,feedUrl,channelId:parsed.channelId,createdAt:new Date().toISOString()};
+          g.socialSources.push(source);
+          g.socialSeen[id]=(feed.items||[]).slice(0,50).map(newsItemKey);
+          saveStore(store);
+          return interaction.editReply(`✅ SNS最新情報 #${id} を登録しました。\nSNS: **${platform}**\nプロフィール: ${profileUrl}\n投稿先: <#${parsed.channelId}>\n次の新着から通知します。`);
+        }catch(e){
+          console.error('social source add',e);
+          return interaction.editReply(`❌ SNSフィードを取得できませんでした。\n${e.message}\n\nX/InstagramはRSSブリッジ側の制限を受ける場合があります。その場合は \`rss_url\` に利用可能なRSS URLを指定できます。`);
+        }
+      }
+      if (n === 'social-source-remove') {
+        const g=guildData(store,interaction.guildId),id=interaction.options.getInteger('id',true);
+        const src=g.socialSources.find(x=>x.id===id);
+        if(!src)return interaction.reply({content:'❌ SNSソースIDが見つかりません。',ephemeral:true});
+        g.socialSources=g.socialSources.filter(x=>x.id!==id);delete g.socialSeen[id];saveStore(store);
+        return interaction.reply({content:`✅ SNSソース #${id} を削除しました。`,ephemeral:true});
+      }
+      if (n === 'social-list') {
+        const g=guildData(store,interaction.guildId);
+        const lines=g.socialSources.map(s=>`**#${s.id} ${s.platform}**\n${s.profileUrl}\n投稿先: <#${s.channelId}>`);
+        const pages=splitDiscordBlocks(`📡 **SNS最新情報**\n登録: **${g.socialSources.length}件**`,lines,1900);
+        await interaction.reply({content:pages[0],ephemeral:true});
+        for(const p of pages.slice(1))await interaction.followUp({content:p,ephemeral:true});
+        return;
+      }
+      if (n === 'social-test') {
+        const g=guildData(store,interaction.guildId),id=interaction.options.getInteger('id',true),source=g.socialSources.find(x=>x.id===id);
+        if(!source)return interaction.reply({content:'❌ SNSソースIDが見つかりません。',ephemeral:true});
+        await interaction.deferReply({ephemeral:true});
+        try{
+          const feed=await rssParser.parseURL(source.feedUrl),item=feed.items?.[0];
+          if(!item)return interaction.editReply('❌ 投稿を取得できません。');
+          const ch=interaction.guild.channels.cache.get(source.channelId)||await interaction.guild.channels.fetch(source.channelId).catch(()=>null);
+          if(!ch?.isTextBased())return interaction.editReply('❌ 投稿先チャンネルを取得できません。');
+          await ch.send({content:`📡 **${source.platform} / 最新情報テスト**`,embeds:[newsEmbed({name:source.platform},item)]});
+          return interaction.editReply(`✅ <#${source.channelId}> にテスト投稿しました。`);
+        }catch(e){console.error(e);return interaction.editReply('❌ SNS最新情報の取得に失敗しました。');}
       }
 
       if (n === 'news-source-add') {
@@ -1416,6 +1566,26 @@ ${url}`)],
       if (n === 'video') return interaction.reply(`🎬 ${interaction.options.getString('url',true)}`);
     }
 
+    if (interaction.isStringSelectMenu() && interaction.customId.startsWith('shopselect:')) {
+      const shopId=interaction.customId.split(':')[1];
+      const productId=interaction.values[0];
+      const shop=store.shops[shopId],p=shop?.products?.find(x=>x.id===productId);
+      if(!shop||!p||p.active===false||p.stock===0)return interaction.reply({content:'❌ この商品は現在購入できません。',ephemeral:true});
+      const embed=new EmbedBuilder()
+        .setTitle(`🛍️ ${p.name}`)
+        .setDescription(p.description||'商品説明はありません。')
+        .addFields(
+          {name:'価格',value:`¥${Number(p.price).toLocaleString()}`,inline:true},
+          {name:'在庫',value:p.stock<0?'∞':String(p.stock),inline:true},
+          {name:'受取方法',value:p.deliveryMode==='zip'?'ZIPファイル':p.deliveryMode==='gigafile'?'ギガファイル便':p.deliveryMode==='url'?'ダウンロードURL':'販売者から配布',inline:true}
+        );
+      if(p.imageUrl&&validHttpUrl(p.imageUrl))embed.setImage(p.imageUrl);
+      const row=new ActionRowBuilder().addComponents(
+        new ButtonBuilder().setCustomId(`buy:${shop.id}:${p.id}`).setLabel('この商品を購入').setStyle(ButtonStyle.Success)
+      );
+      return interaction.reply({embeds:[embed],components:[row],ephemeral:true});
+    }
+
     if (interaction.isButton()) {
       const [kind,a,b]=interaction.customId.split(':');
 
@@ -1714,13 +1884,34 @@ ${url}`)],
           saveStore(store);
 
           const user=await client.users.fetch(order.userId).catch(()=>null);
+          const deliveryLink=
+            p.deliveryMode==='zip' && p.zipFile?.url ? `📦 ZIPファイル: ${p.zipFile.url}` :
+            p.deliveryMode==='gigafile' && p.gigafileUrl ? `📦 ギガファイル便: ${p.gigafileUrl}` :
+            p.deliveryMode==='url' && p.downloadUrl ? `🔗 ダウンロードURL: ${p.downloadUrl}` :
+            p.gigafileUrl ? `📦 ギガファイル便: ${p.gigafileUrl}` :
+            p.zipFile?.url ? `📦 ZIPファイル: ${p.zipFile.url}` :
+            p.downloadUrl ? `🔗 ダウンロードURL: ${p.downloadUrl}` : '';
           const dm=[
             `✅ 注文 #${order.id} 完了`,
             `商品: ${p.name} × ${order.qty}`,
-            p.delivery ? `\n${p.delivery}` : '',
-            p.deliveryFileUrl ? `\nファイル: ${p.deliveryFileUrl}` : ''
-          ].join('\n');
+            deliveryLink,
+            p.deliveryMode==='gigafile' && p.gigafileExpiresAt ? `URL期限: ${new Intl.DateTimeFormat('ja-JP',{timeZone:'Asia/Tokyo',dateStyle:'medium'}).format(new Date(p.gigafileExpiresAt))}` : '',
+            p.delivery ? `\n${p.delivery}` : ''
+          ].filter(Boolean).join('\n');
           await user?.send(dm).catch(()=>{});
+
+          if(shop.salesChannelId){
+            const salesCh=interaction.guild.channels.cache.get(shop.salesChannelId)
+              || await interaction.guild.channels.fetch(shop.salesChannelId).catch(()=>null);
+            if(salesCh?.isTextBased()){
+              const salesEmbed=new EmbedBuilder()
+                .setTitle('🎉 購入実績')
+                .setDescription(`<@${order.userId}> さんが **${p.name}** を購入しました！\n数量: ${order.qty}\n販売者: <@${shop.ownerId}>`)
+                .setTimestamp();
+              if(p.imageUrl&&validHttpUrl(p.imageUrl))salesEmbed.setThumbnail(p.imageUrl);
+              await salesCh.send({embeds:[salesEmbed]}).catch(()=>{});
+            }
+          }
 
           if(p.roleId){
             const member=await interaction.guild.members.fetch(order.userId).catch(()=>null);
@@ -1743,20 +1934,55 @@ ${url}`)],
       if(!Number.isInteger(qty)||qty<1)return interaction.reply({content:'❌ 数量が不正です。',ephemeral:true});
       if(p.stock>=0 && qty>p.stock)return interaction.reply({content:`❌ 在庫不足です。現在 ${p.stock} 個です。`,ephemeral:true});
       if(!paypay.startsWith('https://pay.paypay.ne.jp/'))return interaction.reply({content:'❌ PayPay受け取りURLを入力してください。',ephemeral:true});
-      const id=store.nextOrderId++,order={id,guildId:interaction.guildId,shopId:Number(shopId),productId,userId:interaction.user.id,qty,total:p.price*qty,paypay,status:'pending',createdAt:new Date().toISOString()};
-      store.orders[id]=order;saveStore(store);
-      const ch=interaction.guild.channels.cache.get(shop.orderChannelId||interaction.channelId);
-      if(ch){
-        await ch.send({
-          embeds:[new EmbedBuilder().setTitle(`💰 注文 #${id}`).setDescription(`購入者: <@${interaction.user.id}>\n商品: ${p.name}\n数量: ${qty}\n合計: ¥${order.total.toLocaleString()}\nPayPay: ${paypay}`)],
-          components:[new ActionRowBuilder().addComponents(
-            new ButtonBuilder().setLabel('PayPayリンクを開く').setStyle(ButtonStyle.Link).setURL(paypay),
-            new ButtonBuilder().setCustomId(`order:${id}:complete`).setLabel('受け取り完了・商品配布').setStyle(ButtonStyle.Success),
-            new ButtonBuilder().setCustomId(`order:${id}:reject`).setLabel('却下').setStyle(ButtonStyle.Danger)
-          )]
+      const id=store.nextOrderId++;
+      const order={id,guildId:interaction.guildId,shopId:Number(shopId),productId,userId:interaction.user.id,qty,total:p.price*qty,paypay,status:'pending',createdAt:new Date().toISOString(),ticketChannelId:null};
+      store.orders[id]=order;
+
+      // 購入者・販売者・BOTだけが閲覧できる購入専用チケット
+      let ticketChannel=null;
+      try{
+        const g=guildData(store,interaction.guildId);
+        const safeName=`purchase-${id}-${interaction.user.username}`.toLowerCase().replace(/[^a-z0-9ぁ-んァ-ヶ一-龠_-]/g,'-').slice(0,90);
+        const overwrites=[
+          {id:interaction.guild.id,deny:[PermissionFlagsBits.ViewChannel]},
+          {id:interaction.user.id,allow:[PermissionFlagsBits.ViewChannel,PermissionFlagsBits.SendMessages,PermissionFlagsBits.ReadMessageHistory]},
+          {id:shop.ownerId,allow:[PermissionFlagsBits.ViewChannel,PermissionFlagsBits.SendMessages,PermissionFlagsBits.ReadMessageHistory]},
+          {id:client.user.id,allow:[PermissionFlagsBits.ViewChannel,PermissionFlagsBits.SendMessages,PermissionFlagsBits.ReadMessageHistory,PermissionFlagsBits.ManageChannels]}
+        ];
+        ticketChannel=await interaction.guild.channels.create({
+          name:safeName,
+          type:ChannelType.GuildText,
+          parent:g.ticketCategoryId||undefined,
+          permissionOverwrites:overwrites,
+          reason:`自動販売機 注文 #${id}`
         });
-      }
-      return interaction.reply({content:`✅ 注文 #${id} を送信しました。合計 ¥${order.total.toLocaleString()} です。`,ephemeral:true});
+        order.ticketChannelId=ticketChannel.id;
+      }catch(e){console.error('purchase ticket create',e);}
+
+      saveStore(store);
+      const orderEmbed=new EmbedBuilder()
+        .setTitle(`💰 注文 #${id}`)
+        .setDescription(`販売者: <@${shop.ownerId}>\n購入者: <@${interaction.user.id}>\n商品: **${p.name}**\n数量: **${qty}**\n合計: **¥${order.total.toLocaleString()}**\n配布方式: **${p.deliveryMode==='zip'?'ZIP':p.deliveryMode==='gigafile'?'ギガファイル便':p.deliveryMode==='url'?'URL':'手動'}**\nPayPay: ${paypay}`)
+        .setTimestamp();
+      if(p.imageUrl&&validHttpUrl(p.imageUrl))orderEmbed.setThumbnail(p.imageUrl);
+      const controls=new ActionRowBuilder().addComponents(
+        new ButtonBuilder().setLabel('PayPayリンクを開く').setStyle(ButtonStyle.Link).setURL(paypay),
+        new ButtonBuilder().setCustomId(`order:${id}:complete`).setLabel('受け取り完了・商品配布').setStyle(ButtonStyle.Success),
+        new ButtonBuilder().setCustomId(`order:${id}:reject`).setLabel('却下').setStyle(ButtonStyle.Danger)
+      );
+
+      if(ticketChannel)await ticketChannel.send({content:`<@${shop.ownerId}> <@${interaction.user.id}>`,embeds:[orderEmbed],components:[controls]}).catch(()=>{});
+
+      const notifyCh=interaction.guild.channels.cache.get(shop.orderChannelId||interaction.channelId);
+      if(notifyCh)await notifyCh.send({
+        content:`📩 <@${shop.ownerId}> 自動販売機「${shop.name}」に新しい注文があります。${ticketChannel?` 購入チケット: <#${ticketChannel.id}>`:''}`,
+        embeds:[new EmbedBuilder().setTitle(`注文 #${id}`).setDescription(`商品: ${p.name} × ${qty}\n合計: ¥${order.total.toLocaleString()}\n購入者: <@${interaction.user.id}>`)]
+      }).catch(()=>{});
+
+      const seller=await client.users.fetch(shop.ownerId).catch(()=>null);
+      await seller?.send(`📩 自動販売機「${shop.name}」で商品が購入されました。\n注文 #${id}\n商品: ${p.name} × ${qty}\n合計: ¥${order.total.toLocaleString()}${ticketChannel?`\n購入チケット: https://discord.com/channels/${interaction.guildId}/${ticketChannel.id}`:''}`).catch(()=>{});
+
+      return interaction.reply({content:`✅ 注文 #${id} を送信しました。合計 ¥${order.total.toLocaleString()} です。${ticketChannel?`\n販売者との専用チケット: <#${ticketChannel.id}>`:'\n⚠️ 専用チケット作成に失敗したため、販売者へ通知しました。'}`,ephemeral:true});
     }
   } catch (e) {
     console.error('❌ Interaction処理エラー:', e);
@@ -1816,6 +2042,50 @@ setInterval(async()=>{
   }
   if(changed)saveStore(store);
 },15000);
+
+// ギガファイル便URL期限監視: 残り24時間以内で販売者へ1回通知
+setInterval(async()=>{
+  const now=Date.now();
+  for(const shop of Object.values(store.shops||{})){
+    if(!shop?.active)continue;
+    for(const p of shop.products||[]){
+      if(!p.gigafileUrl||!p.gigafileExpiresAt||p.gigafileExpiryNotifiedAt)continue;
+      const expires=new Date(p.gigafileExpiresAt).getTime(),remaining=expires-now;
+      if(!Number.isFinite(expires)||remaining<=0||remaining>86400000)continue;
+      const owner=await client.users.fetch(shop.ownerId).catch(()=>null);
+      const expiryText=new Intl.DateTimeFormat('ja-JP',{timeZone:'Asia/Tokyo',dateStyle:'medium',timeStyle:'short'}).format(new Date(expires));
+      await owner?.send(`⚠️ ギガファイル便URLの期限が残り1日以内です。\n自動販売機: ${shop.name} (#${shop.id})\n商品: ${p.name} (#${p.id})\n期限: ${expiryText}\n\n商品の他の設定は変更せず、URLのみ更新してください。\n/product-url-update shop_id:${shop.id} product_id:${p.id} gigafile_url:<新URL> url_expiry_days:<日数>`).catch(()=>{});
+      const guild=client.guilds.cache.get(shop.guildId);
+      const ch=guild?.channels.cache.get(shop.orderChannelId)||(guild?await guild.channels.fetch(shop.orderChannelId).catch(()=>null):null);
+      if(ch?.isTextBased())await ch.send({content:`⚠️ <@${shop.ownerId}> **${p.name}** のギガファイル便URL期限が残り1日以内です。URLのみ更新してください。`}).catch(()=>{});
+      p.gigafileExpiryNotifiedAt=new Date().toISOString();saveStore(store);
+    }
+  }
+},60*60*1000);
+
+// SNS最新情報: Twitter/X・YouTube・Instagram RSSを60秒ごとに確認
+setInterval(async()=>{
+  for(const guild of client.guilds.cache.values()){
+    const g=guildData(store,guild.id);
+    if(!g.socialSources?.length)continue;
+    g.socialSeen??={};
+    for(const source of g.socialSources){
+      try{
+        const feed=await rssParser.parseURL(source.feedUrl);
+        const items=(feed.items||[]).slice(0,20),seen=new Set(g.socialSeen[source.id]||[]);
+        const fresh=items.filter(i=>!seen.has(newsItemKey(i))).reverse();
+        if(!fresh.length)continue;
+        const ch=guild.channels.cache.get(source.channelId)||await guild.channels.fetch(source.channelId).catch(()=>null);
+        if(!ch?.isTextBased())continue;
+        for(const item of fresh.slice(-10)){
+          await ch.send({content:`📡 **${source.platform} / 最新情報**`,embeds:[newsEmbed({name:source.platform},item)]});
+        }
+        g.socialSeen[source.id]=[...new Set([...items.map(newsItemKey),...seen])].slice(0,100);
+        saveStore(store);
+      }catch(e){console.error(`social watcher ${guild.id}/${source.id}`,e);}
+    }
+  }
+},60*1000);
 
 // NEWS ALERTS: RSS/Atomを60秒ごとに確認
 setInterval(async()=>{

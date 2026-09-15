@@ -55,6 +55,9 @@ export function guildData(store, guildId) {
     earthquakeChannelId: null,
     weatherChannelId: null,
     autoReplies: {},
+    socialSources: [],
+    nextSocialSourceId: 1,
+    socialSeen: {},
     newsAutoEnabled: false,
     newsSources: [],
     nextNewsSourceId: 1,
@@ -73,6 +76,9 @@ export function guildData(store, guildId) {
   g.weatherAutoEnabled ??= false;
   g.earthquakeAutoEnabled ??= false;
   g.minIntensity ??= 3;
+  g.socialSources ??= [];
+  g.nextSocialSourceId ??= 1;
+  g.socialSeen ??= {};
   g.newsAutoEnabled ??= false;
   g.newsSources ??= [];
   g.nextNewsSourceId ??= 1;

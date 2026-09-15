@@ -12,13 +12,15 @@ export const commandData = [
   new SlashCommandBuilder().setName('shop-create').setDescription('自分の自動販売機を作成')
     .addStringOption(o=>o.setName('name').setDescription('自動販売機名').setRequired(true))
     .addRoleOption(o=>o.setName('manager_role').setDescription('管理ロール'))
-    .addChannelOption(o=>o.setName('order_channel').setDescription('注文通知先').addChannelTypes(ChannelType.GuildText)),
+    .addChannelOption(o=>o.setName('order_channel').setDescription('販売者への注文通知先').addChannelTypes(ChannelType.GuildText))
+    .addChannelOption(o=>o.setName('sales_channel').setDescription('購入実績の配信先').addChannelTypes(ChannelType.GuildText)),
   new SlashCommandBuilder().setName('shop-list').setDescription('このサーバーの自動販売機一覧'),
   new SlashCommandBuilder().setName('shop-config').setDescription('自動販売機設定')
     .addIntegerOption(o=>o.setName('shop_id').setDescription('自販機ID').setRequired(true))
     .addStringOption(o=>o.setName('name').setDescription('新しい自販機名'))
     .addRoleOption(o=>o.setName('manager_role').setDescription('管理ロール'))
-    .addChannelOption(o=>o.setName('order_channel').setDescription('注文通知先').addChannelTypes(ChannelType.GuildText)),
+    .addChannelOption(o=>o.setName('order_channel').setDescription('販売者への注文通知先').addChannelTypes(ChannelType.GuildText))
+    .addChannelOption(o=>o.setName('sales_channel').setDescription('購入実績の配信先').addChannelTypes(ChannelType.GuildText)),
   new SlashCommandBuilder().setName('shop-delete').setDescription('自動販売機を停止')
     .addIntegerOption(o=>o.setName('shop_id').setDescription('自販機ID').setRequired(true)),
   new SlashCommandBuilder().setName('shop-admin').setDescription('【管理者】自販機・注文状況を確認'),
@@ -29,7 +31,15 @@ export const commandData = [
     .addIntegerOption(o=>o.setName('price').setDescription('単価').setRequired(true).setMinValue(0))
     .addIntegerOption(o=>o.setName('stock').setDescription('在庫（-1=無制限）').setRequired(true).setMinValue(-1))
     .addStringOption(o=>o.setName('description').setDescription('商品説明'))
-    .addStringOption(o=>o.setName('delivery').setDescription('購入完了後DM内容'))
+    .addStringOption(o=>o.setName('image_url').setDescription('商品画像URL（https）'))
+    .addStringOption(o=>o.setName('delivery_mode').setDescription('販売データ方式').addChoices(
+      {name:'ZIPファイル',value:'zip'},{name:'ギガファイル便URL',value:'gigafile'},{name:'通常URL',value:'url'}
+    ))
+    .addAttachmentOption(o=>o.setName('zip_file').setDescription('販売するZIPファイル（Discord添付上限内）'))
+    .addStringOption(o=>o.setName('download_url').setDescription('通常のダウンロードURL'))
+    .addStringOption(o=>o.setName('gigafile_url').setDescription('ギガファイル便URL'))
+    .addIntegerOption(o=>o.setName('url_expiry_days').setDescription('URL有効期限までの日数').setMinValue(1).setMaxValue(365))
+    .addStringOption(o=>o.setName('delivery').setDescription('購入完了後DM補足'))
     .addStringOption(o=>o.setName('delivery_file_url').setDescription('購入完了後に送るファイルURL'))
     .addRoleOption(o=>o.setName('role').setDescription('購入完了後に付与するロール')),
   new SlashCommandBuilder().setName('product-list').setDescription('指定自販機の商品一覧')
@@ -41,9 +51,22 @@ export const commandData = [
     .addIntegerOption(o=>o.setName('price').setDescription('新しい価格').setMinValue(0))
     .addIntegerOption(o=>o.setName('stock').setDescription('新しい在庫（-1=無制限）').setMinValue(-1))
     .addStringOption(o=>o.setName('description').setDescription('新しい商品説明'))
-    .addStringOption(o=>o.setName('delivery').setDescription('新しい購入完了DM'))
+    .addStringOption(o=>o.setName('image_url').setDescription('新しい商品画像URL（https）'))
+    .addStringOption(o=>o.setName('delivery_mode').setDescription('販売データ方式').addChoices(
+      {name:'ZIPファイル',value:'zip'},{name:'ギガファイル便URL',value:'gigafile'},{name:'通常URL',value:'url'}
+    ))
+    .addAttachmentOption(o=>o.setName('zip_file').setDescription('新しいZIPファイル（Discord添付上限内）'))
+    .addStringOption(o=>o.setName('download_url').setDescription('新しい通常ダウンロードURL'))
+    .addStringOption(o=>o.setName('gigafile_url').setDescription('更新するギガファイル便URL'))
+    .addIntegerOption(o=>o.setName('url_expiry_days').setDescription('新しいURL有効期限までの日数').setMinValue(1).setMaxValue(365))
+    .addStringOption(o=>o.setName('delivery').setDescription('新しい購入完了DM補足'))
     .addStringOption(o=>o.setName('delivery_file_url').setDescription('新しい配布ファイルURL'))
     .addRoleOption(o=>o.setName('role').setDescription('購入後に付与するロール')),
+  new SlashCommandBuilder().setName('product-url-update').setDescription('ギガファイル便URLと期限だけ更新')
+    .addIntegerOption(o=>o.setName('shop_id').setDescription('自販機ID').setRequired(true))
+    .addStringOption(o=>o.setName('product_id').setDescription('商品ID').setRequired(true))
+    .addStringOption(o=>o.setName('gigafile_url').setDescription('新しいギガファイル便URL').setRequired(true))
+    .addIntegerOption(o=>o.setName('url_expiry_days').setDescription('URL有効期限までの日数').setRequired(true).setMinValue(1).setMaxValue(365)),
   new SlashCommandBuilder().setName('product-remove').setDescription('商品を販売停止')
     .addIntegerOption(o=>o.setName('shop_id').setDescription('自販機ID').setRequired(true))
     .addStringOption(o=>o.setName('product_id').setDescription('商品ID').setRequired(true)),
@@ -115,6 +138,19 @@ export const commandData = [
       {name:'天気チャンネルID',value:'weather_channel_id'}
     ))
     .addStringOption(o=>o.setName('value').setDescription('Discord ID').setRequired(true)),
+
+  new SlashCommandBuilder().setName('social-source-add').setDescription('【管理者】SNSプロフィールから最新情報を取得')
+    .addStringOption(o=>o.setName('platform').setDescription('SNS').setRequired(true).addChoices(
+      {name:'X / Twitter',value:'twitter'},{name:'YouTube',value:'youtube'},{name:'Instagram',value:'instagram'}
+    ))
+    .addStringOption(o=>o.setName('profile_url').setDescription('SNSプロフィールURL').setRequired(true))
+    .addStringOption(o=>o.setName('channel_url').setDescription('Discord投稿先チャンネルURL').setRequired(true))
+    .addStringOption(o=>o.setName('rss_url').setDescription('任意: 独自RSS URLで上書き')),
+  new SlashCommandBuilder().setName('social-source-remove').setDescription('【管理者】SNS最新情報ソースを削除')
+    .addIntegerOption(o=>o.setName('id').setDescription('ソースID').setRequired(true)),
+  new SlashCommandBuilder().setName('social-list').setDescription('【管理者】SNS最新情報設定一覧'),
+  new SlashCommandBuilder().setName('social-test').setDescription('【管理者】SNS最新情報をテスト投稿')
+    .addIntegerOption(o=>o.setName('id').setDescription('ソースID').setRequired(true)),
 
   new SlashCommandBuilder().setName('news-source-add').setDescription('【管理者】NEWS RSS/Atomソースと投稿先を追加')
     .addStringOption(o=>o.setName('name').setDescription('表示名').setRequired(true))

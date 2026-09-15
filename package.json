@@ -1,7 +1,7 @@
 {
-  "name": "discord-multibot-v5-8-news-alerts",
-  "version": "5.8.0",
-  "description": "Discord MultiBot v5.7 - per prefecture/region weather notification channels.",
+  "name": "discord-multibot-v5-11-zip-url-sales",
+  "version": "5.11.0",
+  "description": "Discord MultiBot v5.9 - enhanced vending, purchase tickets, sales feed and social profile RSS.",
   "type": "module",
   "main": "src/index.js",
   "scripts": {
