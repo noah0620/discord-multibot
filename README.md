@@ -1,56 +1,34 @@
-# Discord MultiBot v5.6 鯖主管理者ロール版
+# Discord MultiBot v5.6.1 天気設定修正版
 
-管理者権限の仕組みを変更しました。
+スクリーンショットの状態
+`地域 0/47 / 自動投稿 ON / 投稿先 未設定`
+が成立してしまう問題を修正しました。
 
-## 権限構成
+## 修正内容
 
-**サーバー所有者（鯖主）**
-- `/admin-role-set` を使用可能
-- 管理者ロールを設定・変更可能
-- 管理者コマンドを常に使用可能
+- `/weather-auto` に `channel` を追加
+- 自動投稿ON時、投稿先未設定ならONにしない
+- 自動投稿ON時、地域0件ならONにしない
+- `/weather-list` で地方ごとの登録県を表示
+- `/weather-register` で地方を追加した際、実際に追加した県名を表示
+- `/weather-admin` で設定不足を警告
 
-**鯖主が指定した管理者ロール**
-- 認証管理
-- ロールパネル管理
-- 入退室設定
-- チケット設定
-- 自動返信管理
-- 予約投稿
-- モデレーション
-- 天気・地震設定
-- 各管理ページ
-- `/diagnostics`
-などを使用・閲覧可能
-
-**その他のメンバー**
-- 管理者コマンド・管理情報は使用不可
-- 一般向けの天気、地震、音楽、購入などは従来どおり利用可能
-
-BOTオーナーは設定事故時の緊急復旧用として管理コマンドを利用できますが、
-`/admin-role-set` によるサーバー管理者ロールの変更は鯖主だけです。
-
-## 最初の設定
-
-鯖主が:
+## 正しい設定例
 
 ```text
-/admin-role-set role:@BOT管理者
+/weather-register action:追加 region:関東地方
+/weather-auto enabled:True time:07:00 channel:#天気
+/weather-list
 ```
 
-確認:
+関東地方なら茨城県・栃木県・群馬県・埼玉県・千葉県・東京都・神奈川県が表示されます。
 
-```text
-/admin-role-status
-```
+注意: 新しいバージョンを別フォルダへ展開した場合、以前の `data/store.json` をコピーしないと旧設定は引き継がれません。
 
-## 更新
-
+更新:
 ```powershell
-cd C:\NoahXJP-site\Discord\discord-multibot-v5.6-guild-owner-admin-role
+cd C:\NoahXJP-site\Discord\discord-multibot-v5.6.1-weather-settings-fixed
 npm install
 npm run deploy-commands
 npm start
 ```
-
-`.env` は前バージョンからコピーしてください。
-AI生成機能は搭載していません。

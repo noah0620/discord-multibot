@@ -1,7 +1,7 @@
 {
-  "name": "discord-multibot-v5-6-guild-owner-admin-role",
-  "version": "5.6.0",
-  "description": "Discord MultiBot v5.6 - guild owner controls the server admin role.",
+  "name": "discord-multibot-v5-6-1-weather-settings-fixed",
+  "version": "5.6.1",
+  "description": "Discord MultiBot v5.6.1 - fixed weather region/list/auto channel settings.",
   "type": "module",
   "main": "src/index.js",
   "scripts": {

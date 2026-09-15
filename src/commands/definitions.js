@@ -125,9 +125,10 @@ export const commandData = [
     .addStringOption(o=>o.setName('region').setDescription('47都道府県・地方・全国').setAutocomplete(true)),
   new SlashCommandBuilder().setName('weather-admin').setDescription('【管理者】天気地域登録の詳細を表示'),
   new SlashCommandBuilder().setName('weather-list').setDescription('【管理者】登録済み天気地域を表示'),
-  new SlashCommandBuilder().setName('weather-auto').setDescription('【管理者】サーバーごとの自動天気投稿時刻を設定')
+  new SlashCommandBuilder().setName('weather-auto').setDescription('【管理者】自動天気のON/OFF・時刻・投稿先を設定')
     .addBooleanOption(o=>o.setName('enabled').setDescription('ON/OFF').setRequired(true))
-    .addStringOption(o=>o.setName('time').setDescription('毎日の投稿時刻 例: 07:00 / 18:30')),
+    .addStringOption(o=>o.setName('time').setDescription('毎日の投稿時刻 例: 07:00 / 18:30'))
+    .addChannelOption(o=>o.setName('channel').setDescription('自動天気の投稿先').addChannelTypes(ChannelType.GuildText)),
 
   new SlashCommandBuilder().setName('earthquake').setDescription('最新地震情報'),
   new SlashCommandBuilder().setName('earthquake-register').setDescription('地震通知地域を追加')

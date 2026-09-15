@@ -1083,10 +1083,27 @@ AI生成機能は搭載していません。`
 
       if (n === 'weather-list') {
         const g=guildData(store,interaction.guildId);
-        return interaction.reply({
-          content:`🔒 **登録済み天気地域**\n地域 (${(g.weatherRegions||[]).length}/47): ${(g.weatherRegions||[]).join(' / ')||'未登録'}\n自動投稿: ${g.weatherAutoEnabled?'ON':'OFF'}\n投稿時刻: ${g.weatherAutoTime || '07:00'}（日本時間）\n投稿先: ${g.weatherChannelId?`<#${g.weatherChannelId}>`:'未設定'}`,
-          ephemeral:true
-        });
+        const registered=new Set(g.weatherRegions||[]);
+        const allRegistered=[...registered].filter(p=>PREFECTURES.some(([name])=>name===p));
+        const areaLines=[];
+
+        for(const [areaName,prefs] of Object.entries(WEATHER_AREAS)){
+          const inArea=prefs.filter(p=>registered.has(p));
+          if(!inArea.length)continue;
+          areaLines.push(`**${areaName} (${inArea.length}/${prefs.length})**\n${inArea.join('、')}`);
+        }
+
+        const header=`🔒 **登録済み天気地域**\n`
+          + `合計: **${allRegistered.length}/47都道府県**\n`
+          + `自動投稿: **${g.weatherAutoEnabled?'ON':'OFF'}**\n`
+          + `投稿時刻: **${g.weatherAutoTime||'07:00'}**（日本時間）\n`
+          + `投稿先: ${g.weatherChannelId?`<#${g.weatherChannelId}>`:'⚠️ 未設定'}`
+          + (!allRegistered.length?`\n\n⚠️ 地域が未登録です。\n\`/weather-register action:追加 region:関東地方\` のように登録してください。`:'')
+          + (g.weatherAutoEnabled&&!g.weatherChannelId?`\n⚠️ 自動投稿ONですが投稿先が未設定です。`:'');
+        const pages=splitDiscordBlocks(header,areaLines,1900);
+        await interaction.reply({content:pages[0],ephemeral:true});
+        for(const page of pages.slice(1))await interaction.followUp({content:page,ephemeral:true});
+        return;
       }
 
       if (n === 'weather-admin') {
@@ -1110,18 +1127,41 @@ AI生成機能は搭載していません。`
         const g=guildData(store,interaction.guildId);
         const enabled=interaction.options.getBoolean('enabled',true);
         const raw=interaction.options.getString('time');
+        const channel=interaction.options.getChannel('channel');
 
         if(raw){
-          const m=raw.trim().match(/^(?:[01]\d|2[0-3]):[0-5]\d$/);
-          if(!m)return interaction.reply({content:'❌ 時刻は `07:00` や `18:30` のように24時間表記で入力してください。',ephemeral:true});
-          g.weatherAutoTime=raw.trim();
+          const value=raw.trim();
+          if(!/^(?:[01]\d|2[0-3]):[0-5]\d$/.test(value)){
+            return interaction.reply({content:'❌ 時刻は `07:00` や `18:30` のように24時間表記で入力してください。',ephemeral:true});
+          }
+          g.weatherAutoTime=value;
           g.lastWeatherPostDate=null;
+        }
+
+        if(channel)g.weatherChannelId=channel.id;
+
+        if(enabled && !g.weatherChannelId){
+          return interaction.reply({
+            content:'❌ 自動投稿をONにするには投稿先チャンネルが必要です。\n例: `/weather-auto enabled:True time:07:00 channel:#天気`',
+            ephemeral:true
+          });
+        }
+
+        if(enabled && !(g.weatherRegions||[]).length){
+          return interaction.reply({
+            content:'❌ 自動投稿をONにする前に天気地域を1つ以上登録してください。\n例: `/weather-register action:追加 region:関東地方`',
+            ephemeral:true
+          });
         }
 
         g.weatherAutoEnabled=enabled;
         saveStore(store);
         return interaction.reply({
-          content:`✅ 自動天気投稿: ${g.weatherAutoEnabled?'ON':'OFF'}\n🕒 投稿時刻: ${g.weatherAutoTime || '07:00'}（日本時間）`,
+          content:`✅ **自動天気設定を保存しました**\n`
+            + `自動投稿: **${g.weatherAutoEnabled?'ON':'OFF'}**\n`
+            + `投稿時刻: **${g.weatherAutoTime||'07:00'}**（日本時間）\n`
+            + `投稿先: ${g.weatherChannelId?`<#${g.weatherChannelId}>`:'未設定'}\n`
+            + `登録地域: **${(g.weatherRegions||[]).length}/47都道府県**`,
           ephemeral:true
         });
       }
