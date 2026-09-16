@@ -1255,7 +1255,11 @@ AI生成機能は搭載していません。`
         }
 
         g.weatherChannelRoutes ??= {};
-        for(const pref of expanded)g.weatherChannelRoutes[pref]=channel.id;
+        g.weatherRegions ??= [];
+        for(const pref of expanded){
+          g.weatherChannelRoutes[pref]=channel.id;
+          if(!g.weatherRegions.includes(pref))g.weatherRegions.push(pref);
+        }
         saveStore(store);
 
         return interaction.reply({
@@ -1362,10 +1366,16 @@ AI生成機能は搭載していません。`
       }
       if (n === 'earthquake-auto') {
         const g=guildData(store,interaction.guildId);
-        g.earthquakeAutoEnabled=interaction.options.getBoolean('enabled',true);
+        const enabled=interaction.options.getBoolean('enabled',true);
+        const channel=interaction.options.getChannel('channel');
+        if(channel)g.earthquakeChannelId=channel.id;
+        if(enabled && !g.earthquakeChannelId){
+          return interaction.reply({content:'❌ 地震速報の投稿先が未設定です。`/earthquake-auto enabled:True channel:#地震速報` のように投稿先も指定してください。',ephemeral:true});
+        }
+        g.earthquakeAutoEnabled=enabled;
         saveStore(store);
         return interaction.reply({
-          content:`✅ 自動地震速報: ${g.earthquakeAutoEnabled?'ON':'OFF'}\n対象: ${g.earthquakeRegions.length?g.earthquakeRegions.join(' / '):'全国（地域未設定）'}\n⚡ 新着地震を約${config.earthquakePollSeconds}秒間隔で監視し、取得後すぐ投稿します。`,
+          content:`✅ 自動地震速報: **${g.earthquakeAutoEnabled?'ON':'OFF'}**\n投稿先: ${g.earthquakeChannelId?`<#${g.earthquakeChannelId}>`:'未設定'}\n対象: ${g.earthquakeRegions.length?g.earthquakeRegions.join(' / '):'全国（地域未設定）'}\n最低震度: **${g.minIntensity||3}**\n⚡ 新着地震を約${config.earthquakePollSeconds}秒間隔で監視します。`,
           ephemeral:true
         });
       }
@@ -2061,12 +2071,21 @@ setInterval(async()=>{
   }
 },60*1000);
 
-setInterval(async()=>{
+let earthquakeWatcherBusy=false;
+async function runEarthquakeWatcher(){
+  if(earthquakeWatcherBusy)return;
+  earthquakeWatcherBusy=true;
   try{
     const item=await fetchLatestEarthquake();
     if(!item)return;
     const eventId=String(item.id || item._id || item.time || JSON.stringify(item).slice(0,80));
-    if(store.lastEarthquakeEventId===null){store.lastEarthquakeEventId=eventId;saveStore(store);return;}
+
+    // 起動直後は現在の最新イベントを基準値にする。以後の新着のみ通知。
+    if(store.lastEarthquakeEventId===null){
+      store.lastEarthquakeEventId=eventId;saveStore(store);
+      console.log(`🌏 地震監視開始: 基準イベント ${eventId}`);
+      return;
+    }
     if(store.lastEarthquakeEventId===eventId)return;
     store.lastEarthquakeEventId=eventId;saveStore(store);
 
@@ -2074,66 +2093,75 @@ setInterval(async()=>{
     const areaText=(item.points||[]).map(p=>p.pref||p.addr||'').join(' ');
     for(const guild of client.guilds.cache.values()){
       const g=guildData(store,guild.id);
-      if(!g.earthquakeAutoEnabled||!g.earthquakeChannelId)continue;
+      if(!g.earthquakeAutoEnabled)continue;
+      if(!g.earthquakeChannelId){console.warn(`⚠️ 地震自動通知 ${guild.id}: 投稿先未設定`);continue;}
       if(maxN<Number(g.minIntensity||3))continue;
-      // 地域が1件も登録されていない場合は全国を対象にする。
-      // 1件以上登録されている場合だけ、その登録地域で絞り込む。
       const earthquakeTargets=g.earthquakeRegions||[];
-      if(earthquakeTargets.length>0 && !earthquakeTargets.some(r=>areaText.includes(r.replace(/[都道府県]$/,'')))) continue;
-      const quakeChannel=guild.channels.cache.get(g.earthquakeChannelId)
-        || await guild.channels.fetch(g.earthquakeChannelId).catch(()=>null);
-      if(quakeChannel?.isTextBased())await quakeChannel.send(earthquakeText(item)).catch(()=>{});
+      if(earthquakeTargets.length>0 && !earthquakeTargets.some(r=>areaText.includes(r.replace(/[都道府県]$/,''))))continue;
+      const ch=guild.channels.cache.get(g.earthquakeChannelId)||await guild.channels.fetch(g.earthquakeChannelId).catch(()=>null);
+      if(!ch?.isTextBased()){console.warn(`⚠️ 地震自動通知 ${guild.id}: 投稿先を取得できません`);continue;}
+      await ch.send(earthquakeText(item));
+      console.log(`🚨 地震速報を投稿: ${guild.name} / ${ch.name}`);
     }
-  }catch(e){console.error('earthquake watcher',e);}
-},config.earthquakePollSeconds*1000);
+  }catch(e){console.error('❌ earthquake watcher',e);}
+  finally{earthquakeWatcherBusy=false;}
+}
 
-setInterval(async()=>{
-  const now=new Date();
-  const parts=new Intl.DateTimeFormat('ja-JP',{
-    timeZone:'Asia/Tokyo',
-    year:'numeric',month:'2-digit',day:'2-digit',
-    hour:'2-digit',minute:'2-digit',hour12:false
-  }).formatToParts(now);
-  const get=(type)=>parts.find(p=>p.type===type)?.value;
-  const currentTime=`${get('hour')}:${get('minute')}`;
-  const dateKey=`${get('year')}-${get('month')}-${get('day')}`;
+let weatherWatcherBusy=false;
+async function runWeatherWatcher(){
+  if(weatherWatcherBusy)return;
+  weatherWatcherBusy=true;
+  try{
+    const now=new Date();
+    const parts=new Intl.DateTimeFormat('ja-JP',{
+      timeZone:'Asia/Tokyo',year:'numeric',month:'2-digit',day:'2-digit',
+      hour:'2-digit',minute:'2-digit',hour12:false,hourCycle:'h23'
+    }).formatToParts(now);
+    const get=(type)=>parts.find(p=>p.type===type)?.value;
+    const currentTime=`${get('hour')}:${get('minute')}`;
+    const dateKey=`${get('year')}-${get('month')}-${get('day')}`;
 
-  for(const guild of client.guilds.cache.values()){
-    const g=guildData(store,guild.id);
-    const postTime=g.weatherAutoTime || '07:00';
+    for(const guild of client.guilds.cache.values()){
+      const g=guildData(store,guild.id);
+      if(!g.weatherAutoEnabled)continue;
+      if(!(g.weatherRegions||[]).length){console.warn(`⚠️ 天気自動投稿 ${guild.id}: 地域未登録`);continue;}
+      const postTime=g.weatherAutoTime||'07:00';
+      if(currentTime!==postTime||g.lastWeatherPostDate===dateKey)continue;
 
-    if(!g.weatherAutoEnabled || !g.weatherRegions.length)continue;
-    if(currentTime!==postTime || g.lastWeatherPostDate===dateKey)continue;
-
-    try{
-      g.weatherChannelRoutes ??= {};
+      g.weatherChannelRoutes??={};
       const groups=new Map();
       for(const pref of g.weatherRegions){
-        const channelId=g.weatherChannelRoutes[pref] || g.weatherChannelId;
+        const channelId=g.weatherChannelRoutes[pref]||g.weatherChannelId;
         if(!channelId)continue;
         if(!groups.has(channelId))groups.set(channelId,[]);
         groups.get(channelId).push(pref);
       }
-      if(!groups.size)continue;
+      if(!groups.size){console.warn(`⚠️ 天気自動投稿 ${guild.id}: 投稿先未設定`);continue;}
 
       let sentAny=false;
       for(const [channelId,regions] of groups){
-        const ch=guild.channels.cache.get(channelId)
-          || await guild.channels.fetch(channelId).catch(()=>null);
-        if(!ch?.isTextBased())continue;
+        const ch=guild.channels.cache.get(channelId)||await guild.channels.fetch(channelId).catch(()=>null);
+        if(!ch?.isTextBased()){console.warn(`⚠️ 天気自動投稿 ${guild.id}: channel ${channelId} 取得不可`);continue;}
         const pages=await buildWeatherPages(regions);
         for(const page of pages)await ch.send(page);
         sentAny=true;
+        console.log(`🌤️ 天気予報を自動投稿: ${guild.name} / ${ch.name} / ${regions.length}地域`);
       }
-
-      if(sentAny){
-        g.lastWeatherPostDate=dateKey;
-        saveStore(store);
-      }
-    }catch(e){
-      console.error(`weather auto ${guild.id}`,e);
+      if(sentAny){g.lastWeatherPostDate=dateKey;saveStore(store);}
     }
-  }
-},15*1000);
+  }catch(e){console.error('❌ weather auto watcher',e);}
+  finally{weatherWatcherBusy=false;}
+}
+
+client.once(Events.ClientReady,async readyClient=>{
+  console.log(`✅ Discordログイン完了: ${readyClient.user.tag} / ${readyClient.user.id}`);
+  console.log(`🌤️ 天気自動投稿監視: 15秒間隔 / JST`);
+  console.log(`🌏 地震速報監視: 約${config.earthquakePollSeconds}秒間隔`);
+  await runEarthquakeWatcher();
+  await runWeatherWatcher();
+  setInterval(runEarthquakeWatcher,config.earthquakePollSeconds*1000);
+  setInterval(runWeatherWatcher,15*1000);
+});
+
 
 client.login(config.token);

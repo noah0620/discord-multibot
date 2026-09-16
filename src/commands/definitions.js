@@ -186,8 +186,9 @@ export const commandData = [
     .addStringOption(o=>o.setName('region').setDescription('地域').setAutocomplete(true).setRequired(true))
     .addIntegerOption(o=>o.setName('min_intensity').setDescription('最低震度 1〜7').setMinValue(1).setMaxValue(7)),
   new SlashCommandBuilder().setName('earthquake-list').setDescription('登録済み地震地域'),
-  new SlashCommandBuilder().setName('earthquake-auto').setDescription('自動地震速報ON/OFF')
-    .addBooleanOption(o=>o.setName('enabled').setDescription('ON/OFF').setRequired(true)),
+  new SlashCommandBuilder().setName('earthquake-auto').setDescription('自動地震速報ON/OFF・投稿先設定')
+    .addBooleanOption(o=>o.setName('enabled').setDescription('ON/OFF').setRequired(true))
+    .addChannelOption(o=>o.setName('channel').setDescription('地震速報の投稿先').addChannelTypes(ChannelType.GuildText)),
 
   new SlashCommandBuilder().setName('schedule-post').setDescription('予約投稿')
     .addChannelOption(o=>o.setName('channel').setDescription('投稿先').setRequired(true).addChannelTypes(ChannelType.GuildText))
