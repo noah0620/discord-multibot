@@ -78,6 +78,68 @@ function earthquakeText(item){
   ].join('\n');
 }
 
+
+function splitDiscordBlocks(header,blocks,maxLength=1900){
+  const pages=[]; let current=header||'';
+  for(const block of (blocks||[])){
+    const addition=(current?'\n\n':'')+block;
+    if((current+addition).length>maxLength && current){pages.push(current);current=block;}
+    else current+=addition;
+  }
+  if(current||!pages.length)pages.push(current||header||'情報はありません。');
+  return pages;
+}
+
+function weatherCodeLabel(code){
+  const c=Number(code);
+  if(c===0)return ['☀️','快晴'];
+  if([1,2].includes(c))return ['🌤️','晴れ'];
+  if(c===3)return ['☁️','曇り'];
+  if([45,48].includes(c))return ['🌫️','霧'];
+  if([51,53,55,56,57].includes(c))return ['🌦️','霧雨'];
+  if([61,63,65,66,67,80,81,82].includes(c))return ['🌧️','雨'];
+  if([71,73,75,77,85,86].includes(c))return ['🌨️','雪'];
+  if([95,96,99].includes(c))return ['⛈️','雷雨'];
+  return ['🌤️','天気'];
+}
+
+async function fetchWeatherPrefecture(pref){
+  const row=PREFECTURES.find(([name])=>name===pref);
+  if(!row)throw new Error(`都道府県が見つかりません: ${pref}`);
+  const [,capital]=row;
+  const geoUrl=`https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(capital)}&count=1&language=ja&format=json`;
+  const geoRes=await fetch(geoUrl);
+  if(!geoRes.ok)throw new Error(`Open-Meteo geocoding HTTP ${geoRes.status}`);
+  const geo=await geoRes.json(),loc=geo.results?.[0];
+  if(!loc)throw new Error(`${capital} の位置情報を取得できません`);
+  const url=`https://api.open-meteo.com/v1/forecast?latitude=${loc.latitude}&longitude=${loc.longitude}&daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_sum,precipitation_probability_max&timezone=Asia%2FTokyo&forecast_days=2`;
+  const res=await fetch(url);
+  if(!res.ok)throw new Error(`Open-Meteo forecast HTTP ${res.status}`);
+  const data=await res.json(),d=data.daily||{};
+  const [icon,label]=weatherCodeLabel(d.weather_code?.[0]);
+  return {pref,capital,icon,label,min:d.temperature_2m_min?.[0],max:d.temperature_2m_max?.[0],rain:d.precipitation_sum?.[0],prob:d.precipitation_probability_max?.[0]};
+}
+
+async function buildWeatherPages(regions){
+  const blocks=[];
+  for(const pref of [...new Set(regions||[])]){
+    try{
+      const w=await fetchWeatherPrefecture(pref);
+      const rainExpected=Number(w.rain||0)>0 || Number(w.prob||0)>=40;
+      blocks.push(`${w.icon} **${w.pref}（${w.capital}）** — ${w.label}\n最低 ${w.min??'-'}℃ / 最高 ${w.max??'-'}℃\n降水量 ${w.rain??'-'}mm / 降水確率 ${w.prob??'-'}%${rainExpected?'\n☔ 雨具があると安心です。':''}`);
+    }catch(e){
+      console.error(`weather fetch ${pref}`,e);
+      blocks.push(`⚠️ **${pref}** — 天気情報を取得できませんでした。`);
+    }
+  }
+  return splitDiscordBlocks(`🌤️ **天気予報**\n代表地点: 各都道府県の県庁所在地付近`,blocks,1900);
+}
+
+async function replyWeatherPages(interaction,pages){
+  await interaction.editReply({content:pages[0]||'天気情報を取得できませんでした。'});
+  for(const page of pages.slice(1))await interaction.followUp({content:page});
+}
+
 function parseDiscordChannelUrl(raw,guildId){
   try{
     const u=new URL(raw);
@@ -1827,7 +1889,7 @@ ${url}`)],
   } catch (e) {
     console.error('❌ Interaction処理エラー:', e);
     if(interaction.isRepliable()){
-      const m={content:'❌ エラーが発生しました。コンソールを確認してください。',ephemeral:true};
+      const m={content:`❌ エラーが発生しました: **${e?.name||'Error'}**\n${String(e?.message||e).slice(0,1200)}`,ephemeral:true};
       if(interaction.replied||interaction.deferred)interaction.followUp(m).catch(()=>{});else interaction.reply(m).catch(()=>{});
     }
   }
