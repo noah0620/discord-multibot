@@ -16,6 +16,57 @@ assertConfig();
 const store = loadStore();
 const players = new Map();
 
+// 管理者・ショップ・URL・音声の共通ヘルパー
+const ADMIN_COMMANDS=new Set([
+  'shop-admin','verify-panel','verify-admin','verify-status','verify-settings',
+  'join-leave-settings','join-leave-status','ticket-panel','ticket-settings','ticket-status',
+  'autoreply-add','autoreply-remove','autoreply-list','guild-settings','guild-status','setting',
+  'social-source-add','social-source-remove','social-list','social-test',
+  'news-source-add','news-source-remove','news-list','news-auto','news-test',
+  'weather-register','weather-admin','weather-channel','weather-channel-remove','weather-list','weather-auto',
+  'earthquake-register','earthquake-list','earthquake-auto',
+  'schedule-post','schedule-list','schedule-cancel',
+  'moderation-rule','moderation-list','moderation-remove'
+]);
+
+function isGuildOwner(interaction){
+  return Boolean(interaction.guild && interaction.user && interaction.guild.ownerId===interaction.user.id);
+}
+
+function hasConfiguredAdminRole(interaction){
+  if(!interaction.guild||!interaction.user)return false;
+  if(isGuildOwner(interaction)||isBotOwner(interaction.user.id))return true;
+  const g=guildData(store,interaction.guildId);
+  return Boolean(g.adminRoleId && interaction.member?.roles?.cache?.has(g.adminRoleId));
+}
+
+function isShopManager(interaction,shop){
+  if(!interaction.user||!shop)return false;
+  if(interaction.user.id===shop.ownerId)return true;
+  if(isBotOwner(interaction.user.id))return true;
+  if(interaction.guild?.ownerId===interaction.user.id)return true;
+  return Boolean(shop.managerRoleId && interaction.member?.roles?.cache?.has(shop.managerRoleId));
+}
+
+function validHttpUrl(value){
+  try{
+    const u=new URL(value);
+    return u.protocol==='http:'||u.protocol==='https:';
+  }catch{return false;}
+}
+
+function createFfmpegAudio(url){
+  if(!validHttpUrl(url))throw new Error('再生URLが正しくありません。');
+  const proc=spawn(ffmpegPath,[
+    '-hide_banner','-loglevel','error','-i',url,
+    '-f','s16le','-ar','48000','-ac','2','pipe:1'
+  ],{stdio:['ignore','pipe','pipe']});
+  proc.stderr?.on('data',d=>console.error(`ffmpeg: ${String(d).trim()}`));
+  const resource=createAudioResource(proc.stdout,{inputType:StreamType.Raw,inlineVolume:true});
+  return {proc,resource};
+}
+
+
 // Discordクライアント本体
 const client = new Client({
   intents: [
@@ -343,7 +394,7 @@ client.on(Events.InteractionCreate, async interaction => {
 2. ✅ **管理者承認型認証・認証管理ページ**
 /verify-panel /verify-admin /verify-status /verify-settings
 
-3. 🎭 **最大5個のロールパネル**
+3. 🎭 **ロール無制限・自動ページ分割パネル**
 /role-panel /role-add /role-list /role-remove
 
 4. 🚪 **入室・退出通知と設定確認**
