@@ -139,13 +139,10 @@ export const commandData = [
     ))
     .addStringOption(o=>o.setName('value').setDescription('Discord ID').setRequired(true)),
 
-  new SlashCommandBuilder().setName('social-source-add').setDescription('【管理者】SNSプロフィールから最新情報を取得')
-    .addStringOption(o=>o.setName('platform').setDescription('SNS').setRequired(true).addChoices(
-      {name:'X / Twitter',value:'twitter'},{name:'YouTube',value:'youtube'},{name:'Instagram',value:'instagram'}
-    ))
-    .addStringOption(o=>o.setName('profile_url').setDescription('SNSプロフィールURL').setRequired(true))
-    .addStringOption(o=>o.setName('channel_url').setDescription('Discord投稿先チャンネルURL').setRequired(true))
-    .addStringOption(o=>o.setName('rss_url').setDescription('任意: 独自RSS URLで上書き')),
+  new SlashCommandBuilder().setName('social-source-add').setDescription('【管理者】プロフィールURLからSNSを自動判定して最新情報を取得')
+    .addStringOption(o=>o.setName('profile_url').setDescription('X / YouTube / Instagram のプロフィールURL').setRequired(true))
+    .addStringOption(o=>o.setName('channel_url').setDescription('Discord投稿先チャンネルURL').setRequired(true)),
+
   new SlashCommandBuilder().setName('social-source-remove').setDescription('【管理者】SNS最新情報ソースを削除')
     .addIntegerOption(o=>o.setName('id').setDescription('ソースID').setRequired(true)),
   new SlashCommandBuilder().setName('social-list').setDescription('【管理者】SNS最新情報設定一覧'),

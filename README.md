@@ -1,32 +1,18 @@
-# Discord MultiBot v5.11 ZIP・URL販売対応版
+# Discord MultiBot v5.14.2 地震速報修正版
 
-v5.10までの機能を維持。
+v5.14.1で発生していた
+`ReferenceError: fetchLatestEarthquake is not defined`
+を修正しました。
 
-## 自動販売機の販売データ方式
-`/product-add` / `/product-edit` で以下を選択できます。
+欠落していた以下を復元:
+- `fetchLatestEarthquake()` — P2PQuake APIから最新地震情報を取得
+- `scaleToNumber()` — 震度コード判定
+- `earthquakeText()` — Discord投稿用地震情報生成
 
-- `delivery_mode: ZIPファイル`
-  - `zip_file` に `.zip` をDiscord添付
-  - 支払い確認完了後、購入者DMへZIPの取得URLを送信
-- `delivery_mode: ギガファイル便URL`
-  - `gigafile_url` と `url_expiry_days` を設定
-  - 残り24時間以内で販売者へURL更新通知
-- `delivery_mode: 通常URL`
-  - `download_url` を設定
-  - 支払い確認完了後に購入者へURLを送信
-
-商品選択画面には受取方法を表示しますが、購入前に実際のダウンロードURLは公開しません。
-
-### ギガファイル便
-BOTがギガファイル便へファイルを自動アップロードする機能ではありません。
-販売者がギガファイル便で発行したURLを商品へ登録します。
-
-### ZIP添付について
-ZIPはDiscordの添付URLを保存する方式です。Discord側の添付サイズ上限が適用されます。
-長期販売や大容量データはギガファイル便URL方式を推奨します。
+地域未設定なら全国、地域設定済みなら登録地域のみ、というv5.13の仕様も維持しています。
 
 ```powershell
-cd C:\NoahXJP-site\Discord\discord-multibot-v5.11-zip-url-sales
+cd C:\NoahXJP-site\Discord\discord-multibot-v5.14.2-earthquake-fixed
 npm install
 npm run deploy-commands
 npm start

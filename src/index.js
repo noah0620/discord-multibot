@@ -16,7 +16,68 @@ assertConfig();
 const store = loadStore();
 const players = new Map();
 
+// Discordクライアント本体
+const client = new Client({
+  intents: [
+    GatewayIntentBits.Guilds,
+    GatewayIntentBits.GuildMembers,
+    GatewayIntentBits.GuildMessages,
+    GatewayIntentBits.MessageContent,
+    GatewayIntentBits.GuildVoiceStates
+  ],
+  partials: [Partials.Channel, Partials.Message, Partials.GuildMember, Partials.User]
+});
+
 const rssParser=new Parser({timeout:15000,headers:{'User-Agent':'NoahXJP-Discord-NewsBot/1.0'}});
+
+const P2PQUAKE_HISTORY_URL='https://api.p2pquake.net/v2/history?codes=551&limit=1';
+
+async function fetchLatestEarthquake(){
+  const res=await fetch(P2PQUAKE_HISTORY_URL,{headers:{'User-Agent':'NoahXJP-DiscordBot/5.14.2'}});
+  if(!res.ok)throw new Error(`P2PQuake HTTP ${res.status}`);
+  const data=await res.json();
+  return Array.isArray(data)?(data[0]||null):null;
+}
+
+function scaleToNumber(scale){
+  const n=Number(scale);
+  if(!Number.isFinite(n))return 0;
+  // P2PQuake/JMA scale: 10=1,20=2,30=3,40=4,45=5弱,50=5強,55=6弱,60=6強,70=7
+  if(n>=10)return n/10;
+  return n;
+}
+
+function scaleToLabel(scale){
+  const n=Number(scale);
+  const labels={10:'1',20:'2',30:'3',40:'4',45:'5弱',50:'5強',55:'6弱',60:'6強',70:'7'};
+  return labels[n]||String(scale??'不明');
+}
+
+function earthquakeText(item){
+  if(!item)return '現在、地震情報を取得できませんでした。';
+  const e=item.earthquake||{};
+  const hypo=e.hypocenter||{};
+  const points=item.points||[];
+  const prefs=[...new Set(points.map(p=>p.pref).filter(Boolean))];
+  const maxScale=scaleToLabel(e.maxScale);
+  const magnitude=hypo.magnitude??e.magnitude??'不明';
+  const depth=hypo.depth!=null?`${hypo.depth}km`:'不明';
+  const place=hypo.name||'震源地不明';
+  const time=e.time||item.time||'時刻不明';
+  const tsunami=e.domesticTsunami||e.foreignTsunami||'None';
+  const tsunamiText=tsunami==='None'?'津波の心配なし':`津波情報: ${tsunami}`;
+  return [
+    `🚨 **地震情報**`,
+    `発生時刻: ${time}`,
+    `震源地: **${place}**`,
+    `最大震度: **${maxScale}**`,
+    `マグニチュード: **${magnitude}**`,
+    `深さ: **${depth}**`,
+    `地域: ${prefs.slice(0,20).join('、')||'情報なし'}`,
+    `${tsunamiText}`
+  ].join('\n');
+}
+
 function parseDiscordChannelUrl(raw,guildId){
   try{
     const u=new URL(raw);
@@ -39,331 +100,59 @@ function newsEmbed(source,item){
 }
 async function fetchNewsFeed(source){return rssParser.parseURL(source.feedUrl);}
 
-const SOCIAL_RSS_BRIDGE=(process.env.SOCIAL_RSS_BRIDGE_URL||'https://rsshub.app').replace(/\/+$/,'');
+const SOCIAL_RSS_BRIDGES=(process.env.SOCIAL_RSS_BRIDGE_URLS||process.env.SOCIAL_RSS_BRIDGE_URL||'https://rsshub.app')
+  .split(',').map(x=>x.trim().replace(/\/+$/,'')).filter(Boolean);
 
-function socialUsername(platform,profileUrl){
+function detectSocialPlatform(profileUrl){
   try{
-    const u=new URL(profileUrl);
-    const parts=u.pathname.split('/').filter(Boolean);
-    if(platform==='twitter'){
-      if(!['x.com','www.x.com','twitter.com','www.twitter.com'].includes(u.hostname))return null;
-      return parts[0]?.replace(/^@/,'')||null;
-    }
-    if(platform==='instagram'){
-      if(!['instagram.com','www.instagram.com'].includes(u.hostname))return null;
-      return parts[0]?.replace(/^@/,'')||null;
-    }
+    const h=new URL(profileUrl).hostname.toLowerCase().replace(/^www\./,'');
+    if(h==='youtube.com'||h==='youtu.be'||h==='m.youtube.com')return 'youtube';
+    if(h==='x.com'||h==='twitter.com'||h==='mobile.twitter.com')return 'twitter';
+    if(h==='instagram.com'||h==='m.instagram.com')return 'instagram';
     return null;
   }catch{return null;}
 }
 
-async function resolveSocialFeed(platform,profileUrl,overrideRss=''){
-  if(overrideRss){
-    if(!validNewsUrl(overrideRss))throw new Error('RSS URLが不正です');
-    return overrideRss;
-  }
+function socialUsername(platform,profileUrl){
+  try{
+    const u=new URL(profileUrl),parts=u.pathname.split('/').filter(Boolean);
+    if(platform==='twitter'||platform==='instagram')return parts[0]?.replace(/^@/,'')||null;
+    return null;
+  }catch{return null;}
+}
+
+async function resolveYouTubeFeed(profileUrl){
   const u=new URL(profileUrl);
+  const direct=u.pathname.match(/^\/channel\/(UC[\w-]+)/);
+  if(direct)return `https://www.youtube.com/feeds/videos.xml?channel_id=${direct[1]}`;
+  const html=await fetch(profileUrl,{headers:{'User-Agent':'Mozilla/5.0'}}).then(r=>{
+    if(!r.ok)throw new Error(`YouTube HTTP ${r.status}`);return r.text();
+  });
+  const match=html.match(/"channelId":"(UC[\w-]+)"/)||html.match(/"externalId":"(UC[\w-]+)"/)||html.match(/channel_id=(UC[\w-]+)/);
+  if(!match)throw new Error('YouTubeチャンネルIDを自動取得できません');
+  return `https://www.youtube.com/feeds/videos.xml?channel_id=${match[1]}`;
+}
+
+async function resolveSocialFeedAuto(platform,profileUrl){
   if(platform==='youtube'){
-    if(!['youtube.com','www.youtube.com','m.youtube.com'].includes(u.hostname))throw new Error('YouTubeプロフィールURLではありません');
-    const channelMatch=u.pathname.match(/^\/channel\/(UC[\w-]+)/);
-    if(channelMatch)return `https://www.youtube.com/feeds/videos.xml?channel_id=${channelMatch[1]}`;
-    const html=await fetch(profileUrl,{headers:{'User-Agent':'Mozilla/5.0'}}).then(r=>{if(!r.ok)throw new Error(`YouTube HTTP ${r.status}`);return r.text();});
-    const match=html.match(/"channelId":"(UC[\w-]+)"/)||html.match(/channel_id=(UC[\w-]+)/);
-    if(!match)throw new Error('YouTubeチャンネルIDを取得できません');
-    return `https://www.youtube.com/feeds/videos.xml?channel_id=${match[1]}`;
+    const feedUrl=await resolveYouTubeFeed(profileUrl);
+    await rssParser.parseURL(feedUrl);
+    return {feedUrl,method:'YouTube公式Atom/RSS'};
   }
   const username=socialUsername(platform,profileUrl);
   if(!username)throw new Error('プロフィールURLからユーザー名を取得できません');
-  if(platform==='twitter')return `${SOCIAL_RSS_BRIDGE}/twitter/user/${encodeURIComponent(username)}`;
-  if(platform==='instagram')return `${SOCIAL_RSS_BRIDGE}/instagram/user/${encodeURIComponent(username)}`;
-  throw new Error('未対応SNSです');
-}
-
-
-function isGuildOwner(interaction){
-  return Boolean(interaction.guild && interaction.user?.id === interaction.guild.ownerId);
-}
-
-function hasConfiguredAdminRole(interaction){
-  if(!interaction.guildId)return false;
-  if(isGuildOwner(interaction))return true;
-  if(isBotOwner(interaction.user.id))return true; // 緊急復旧用
-  const g=guildData(store,interaction.guildId);
-  return Boolean(g.adminRoleId && interaction.member?.roles?.cache?.has(g.adminRoleId));
-}
-
-const ADMIN_COMMANDS=new Set([
-  'shop-admin',
-  'verify-panel','verify-admin','verify-status','verify-settings',
-  'role-panel','role-add','role-list','role-remove',
-  'join-leave-settings','join-leave-status','guild-settings','guild-status','setting',
-  'ticket-panel','ticket-settings','ticket-status',
-  'autoreply-add','autoreply-remove','autoreply-list',
-  'schedule-post','schedule-list','schedule-cancel',
-  'moderation-rule','moderation-list','moderation-remove',
-  'social-source-add','social-source-remove','social-list','social-test',
-  'news-source-add','news-source-remove','news-list','news-auto','news-test',
-  'weather-register','weather-list','weather-admin','weather-auto','weather-channel','weather-channel-remove',
-  'earthquake-register','earthquake-list','earthquake-auto',
-  'diagnostics'
-]);
-
-
-function validHttpUrl(value) {
-  try {
-    const u = new URL(value);
-    return u.protocol === 'https:' || u.protocol === 'http:';
-  } catch {
-    return false;
+  const route=platform==='twitter'?`/twitter/user/${encodeURIComponent(username)}`:`/instagram/user/${encodeURIComponent(username)}`;
+  const errors=[];
+  for(const bridge of SOCIAL_RSS_BRIDGES){
+    const feedUrl=bridge+route;
+    try{
+      await rssParser.parseURL(feedUrl);
+      return {feedUrl,method:`RSSブリッジ (${new URL(bridge).hostname})`};
+    }catch(e){errors.push(`${bridge}: ${e.message}`);}
   }
+  throw new Error(`${platform==='twitter'?'X / Twitter':'Instagram'} の利用可能なRSS取得経路がありません。RSSブリッジ側の制限・障害の可能性があります。`);
 }
 
-function createFfmpegAudio(url) {
-  if (!ffmpegPath) throw new Error('FFmpegが見つかりません。npm installを実行してください。');
-  if (!validHttpUrl(url)) throw new Error('http/https の直接音声URLを指定してください。');
-
-  const proc = spawn(ffmpegPath, [
-    '-hide_banner',
-    '-loglevel', 'error',
-    '-reconnect', '1',
-    '-reconnect_streamed', '1',
-    '-reconnect_delay_max', '5',
-    '-i', url,
-    '-vn',
-    '-f', 's16le',
-    '-ar', '48000',
-    '-ac', '2',
-    'pipe:1'
-  ], { windowsHide:true });
-
-  proc.stderr.on('data', d => {
-    const msg=String(d).trim();
-    if(msg)console.error('ffmpeg:',msg);
-  });
-
-  const resource=createAudioResource(proc.stdout,{
-    inputType:StreamType.Raw,
-    inlineVolume:true
-  });
-
-  return {proc,resource};
-}
-
-
-const client = new Client({
-  intents: [
-    GatewayIntentBits.Guilds,
-    GatewayIntentBits.GuildMembers,
-    GatewayIntentBits.GuildMessages,
-    GatewayIntentBits.MessageContent,
-    GatewayIntentBits.GuildVoiceStates
-  ],
-  partials: [Partials.Channel]
-});
-
-function isShopManager(interaction, shop) {
-  if (!shop) return false;
-  if (isBotOwner(interaction.user.id)) return true;
-  if (shop.ownerId === interaction.user.id) return true;
-  if (interaction.memberPermissions?.has(PermissionFlagsBits.Administrator)) return true;
-  return Boolean(shop.managerRoleId && interaction.member?.roles?.cache?.has(shop.managerRoleId));
-}
-function scaleToNumber(scale) {
-  if (typeof scale !== 'number') return 0;
-  const map = {10:1,20:2,30:3,40:4,45:5,46:5,50:5,55:6,60:6,70:7};
-  return map[scale] || 0;
-}
-async function geocode(name) {
-  const u = new URL('https://geocoding-api.open-meteo.com/v1/search');
-  u.searchParams.set('name', name);
-  u.searchParams.set('count', '1');
-  u.searchParams.set('language', 'ja');
-  u.searchParams.set('format', 'json');
-  const r = await fetch(u);
-  if (!r.ok) throw new Error(`地域検索に失敗しました (${r.status})`);
-  const j = await r.json();
-  return j.results?.[0] || null;
-}
-
-function weatherLookupName(name) {
-  const row = PREFECTURES.find(([pref]) => pref === name);
-  return row ? row[1] : name;
-}
-
-function weatherLabel(name) {
-  const row = PREFECTURES.find(([pref, capital]) => pref === name || capital === name);
-  return row ? row[0] : name;
-}
-
-const WEATHER_CODE_TEXT = {
-  0:'晴れ', 1:'ほぼ晴れ', 2:'やや曇り', 3:'曇り',
-  45:'霧', 48:'着氷性の霧',
-  51:'弱い霧雨', 53:'霧雨', 55:'強い霧雨',
-  56:'弱い着氷性霧雨', 57:'強い着氷性霧雨',
-  61:'弱い雨', 63:'雨', 65:'強い雨',
-  66:'弱い着氷性の雨', 67:'強い着氷性の雨',
-  71:'弱い雪', 73:'雪', 75:'強い雪', 77:'雪粒',
-  80:'弱いにわか雨', 81:'にわか雨', 82:'激しいにわか雨',
-  85:'弱いにわか雪', 86:'強いにわか雪',
-  95:'雷雨', 96:'ひょうを伴う雷雨', 99:'激しいひょうを伴う雷雨'
-};
-
-function weatherKind(code) {
-  if ([95,96,99].includes(code)) return 'thunder';
-  if ([71,73,75,77,85,86].includes(code)) return 'snow';
-  if ([51,53,55,56,57,61,63,65,66,67,80,81,82].includes(code)) return 'rain';
-  if ([3,45,48].includes(code)) return 'cloudy';
-  if ([1,2].includes(code)) return 'partly';
-  return 'sunny';
-}
-
-function weatherIcon(code) {
-  const kind = weatherKind(code);
-  if (kind === 'thunder') return '⛈️';
-  if (kind === 'snow') return '🌨️';
-  if (kind === 'rain') return '☔️';
-  if (kind === 'cloudy') return '☁️';
-  if (kind === 'partly') return '🌤️';
-  return '☀️';
-}
-
-function weatherJudgement(code, precipitationMm, probability) {
-  const kind = weatherKind(code);
-  if (kind === 'thunder') return '雷雨となる可能性があります。';
-  if (kind === 'snow') return '雪が降るでしょう。';
-
-  // 天気コードが雨系、日降水量0.1mm以上、または最大降水確率50%以上なら雨予報。
-  const rainExpected = kind === 'rain' || precipitationMm >= 0.1 || probability >= 50;
-  return rainExpected ? '雨が降るでしょう。' : '雨は降らないでしょう。';
-}
-
-function oneDecimal(value) {
-  const n = Number(value ?? 0);
-  return Math.round(n * 10) / 10;
-}
-
-function jpWeatherTimestamp(date = new Date()) {
-  const parts = new Intl.DateTimeFormat('ja-JP', {
-    timeZone:'Asia/Tokyo',
-    year:'numeric', month:'2-digit', day:'2-digit',
-    hour:'2-digit', minute:'2-digit', hour12:false
-  }).formatToParts(date);
-  const get = type => parts.find(p => p.type === type)?.value;
-  return `${get('year')}/${get('month')}/${get('day')} ${get('hour')}:${get('minute')}`;
-}
-
-async function weatherText(name) {
-  const lookup = weatherLookupName(name);
-  const label = weatherLabel(name);
-  const loc = await geocode(lookup);
-  if (!loc) return `❌ 「${label}」の天気地点が見つかりませんでした。`;
-
-  const u = new URL('https://api.open-meteo.com/v1/forecast');
-  u.searchParams.set('latitude', loc.latitude);
-  u.searchParams.set('longitude', loc.longitude);
-  u.searchParams.set(
-    'daily',
-    'weather_code,temperature_2m_max,temperature_2m_min,precipitation_sum,precipitation_probability_max'
-  );
-  u.searchParams.set('timezone', 'Asia/Tokyo');
-  u.searchParams.set('forecast_days', '1');
-
-  const r = await fetch(u);
-  if (!r.ok) return `❌ ${label} の天気情報取得に失敗しました (${r.status})。`;
-  const w = await r.json();
-
-  const code = Number(w.daily?.weather_code?.[0] ?? 0);
-  const min = oneDecimal(w.daily?.temperature_2m_min?.[0]);
-  const max = oneDecimal(w.daily?.temperature_2m_max?.[0]);
-  const precipitation = oneDecimal(w.daily?.precipitation_sum?.[0]);
-  const probability = Math.round(Number(w.daily?.precipitation_probability_max?.[0] ?? 0));
-
-  const description = WEATHER_CODE_TEXT[code] || `天気コード${code}`;
-  const icon = weatherIcon(code);
-  const judgement = weatherJudgement(code, precipitation, probability);
-
-  return [
-    `**${label}は【${icon}】${judgement}**`,
-    `本日${label}の天気は、${description}`,
-    `最低気温 ${min}°C / 最高気温 ${max}°C`,
-    `降水量 ${precipitation} mm / 降水確率 ${probability}%`
-  ].join('\\n');
-}
-
-
-function splitDiscordBlocks(header, blocks, maxLength = 1900) {
-  const pages = [];
-  let current = header ? `${header}\n\n` : '';
-
-  for (const block of blocks) {
-    const next = current ? `${current}${block}\n\n` : `${block}\n\n`;
-    if (next.length > maxLength && current.trim()) {
-      pages.push(current.trim());
-      current = `${block}\n\n`;
-    } else {
-      current = next;
-    }
-  }
-
-  if (current.trim()) pages.push(current.trim());
-  return pages;
-}
-
-async function buildWeatherPages(regions) {
-  const unique = [...new Set(regions)];
-  const texts = [];
-
-  for (const region of unique) {
-    try {
-      texts.push(await weatherText(region));
-    } catch (e) {
-      texts.push(`❌ ${region} の天気取得に失敗しました。`);
-      console.error(`weather ${region}`, e);
-    }
-  }
-
-  return splitDiscordBlocks(`**${jpWeatherTimestamp()}**`, texts);
-}
-
-async function replyWeatherPages(interaction, pages) {
-  if (!pages.length) {
-    return interaction.editReply('❌ 表示する天気地域が登録されていません。');
-  }
-
-  await interaction.editReply(pages[0]);
-  for (const page of pages.slice(1)) {
-    await interaction.followUp(page);
-  }
-}
-
-async function fetchLatestEarthquake() {
-  const d = await fetch('https://api.p2pquake.net/v2/history?codes=551&limit=1').then(r=>r.json());
-  return d?.[0] || null;
-}
-function earthquakeText(item) {
-  const e = item?.earthquake;
-  if (!e) return '地震情報を取得できませんでした。';
-  return `🚨 **地震情報**
-時刻: ${e.time || '不明'}
-震源: ${e.hypocenter?.name || '不明'}
-最大震度: ${e.maxScale ?? '不明'}
-M${e.hypocenter?.magnitude ?? '?'} / 深さ ${e.hypocenter?.depth ?? '?'}km
-津波: ${e.domesticTsunami || '情報なし'}`;
-}
-
-client.once(Events.ClientReady, c => {
-  console.log(`✅ ${c.user.tag} 起動 / ${c.guilds.cache.size} servers`);
-  console.log(`🆔 起動中BOT User ID: ${c.user.id}`);
-  console.log(`🆔 .env DISCORD_CLIENT_ID: ${config.clientId || '未設定'}`);
-
-  if (config.clientId && config.clientId !== c.user.id) {
-    console.error('❌ 重要: DISCORD_CLIENT_ID と起動中BOTのIDが一致していません。');
-    console.error('   deploy-commands はv5.2からBOTトークン側IDへ自動登録します。');
-    console.error('   .env の DISCORD_CLIENT_ID も上記「起動中BOT User ID」に修正してください。');
-  } else {
-    console.log('✅ BOTトークンとApplication IDの対応: OK');
-  }
-});
 
 client.on(Events.GuildMemberAdd, async member => {
   const g = guildData(store, member.guild.id);
@@ -979,37 +768,39 @@ AI生成機能は搭載していません。`
       }
 
       if (n === 'role-panel') {
-        const buttons=[];
-        const errors=[];
-        let directCount=0;
-
+        const g=guildData(store,interaction.guildId);
+        // 従来の直接指定 role1〜role5 も保存一覧へ取り込み可能
         for(let x=1;x<=5;x++){
           const role=interaction.options.getRole(`role${x}`);
           if(!role)continue;
-          directCount++;
           const problem=rolePanelProblem(interaction.guild,role);
-          if(problem){errors.push(`• ${role.name}: ${problem}`);continue;}
+          if(problem)return interaction.reply({content:`❌ ${role.name}: ${problem}`,ephemeral:true});
           const label=(interaction.options.getString(`label${x}`)||role.name).slice(0,80);
-          buttons.push(new ButtonBuilder().setCustomId(`role:${role.id}`).setLabel(label).setStyle(ButtonStyle.Secondary));
+          g.roleOptions=(g.roleOptions||[]).filter(o=>o.roleId!==role.id);
+          g.roleOptions.push({roleId:role.id,label});
         }
-
-        if(directCount===0){
-          const g=guildData(store,interaction.guildId);
-          for(const opt of (g.roleOptions||[]).slice(0,5)){
-            const role=await interaction.guild.roles.fetch(opt.roleId).catch(()=>null);
-            if(!role)continue;
-            const problem=rolePanelProblem(interaction.guild,role);
-            if(problem){errors.push(`• ${role.name}: ${problem}`);continue;}
-            buttons.push(new ButtonBuilder().setCustomId(`role:${role.id}`).setLabel((opt.label||role.name).slice(0,80)).setStyle(ButtonStyle.Secondary));
-          }
+        saveStore(store);
+        const valid=[];
+        for(const opt of (g.roleOptions||[])){
+          const role=await interaction.guild.roles.fetch(opt.roleId).catch(()=>null);
+          if(!role)continue;
+          const problem=rolePanelProblem(interaction.guild,role);
+          if(!problem)valid.push({roleId:role.id,label:(opt.label||role.name).slice(0,100)});
         }
-
-        if(errors.length)return interaction.reply({content:`❌ ロールパネルを作成できません。\n${errors.join('\n')}`,ephemeral:true});
-        if(!buttons.length)return interaction.reply({content:'❌ ロールが指定されていません。直接指定するか `/role-add` で保存してください。',ephemeral:true});
-
+        if(!valid.length)return interaction.reply({content:'❌ `/role-add` でロールを登録してください。',ephemeral:true});
+        const page=0,totalPages=Math.ceil(valid.length/25),slice=valid.slice(0,25);
+        const menu=new StringSelectMenuBuilder()
+          .setCustomId(`rolepage:${page}`)
+          .setPlaceholder(`ロールを選択（1/${totalPages}ページ）`)
+          .addOptions(slice.map(x=>({label:x.label,value:x.roleId,description:'選択で付与 / 所持中なら解除'})));
+        const components=[new ActionRowBuilder().addComponents(menu)];
+        if(totalPages>1)components.push(new ActionRowBuilder().addComponents(
+          new ButtonBuilder().setCustomId(`roleprev:${page}`).setLabel('◀ 前へ').setStyle(ButtonStyle.Secondary).setDisabled(true),
+          new ButtonBuilder().setCustomId(`rolenext:${page}`).setLabel(`次へ ▶ (${page+1}/${totalPages})`).setStyle(ButtonStyle.Secondary)
+        ));
         return interaction.reply({
-          embeds:[new EmbedBuilder().setTitle('🎭 ロール選択').setDescription('ボタンを押すとロールを付与します。もう一度押すと解除します。')],
-          components:[new ActionRowBuilder().addComponents(buttons)]
+          embeds:[new EmbedBuilder().setTitle('🎭 ロール選択').setDescription(`登録ロール: **${valid.length}個**\nプルダウンから選択すると付与、所持中のロールを選択すると解除します。`)],
+          components
         });
       }
 
@@ -1021,7 +812,6 @@ AI生成機能は搭載していません。`
 
         const label=interaction.options.getString('label',true).slice(0,80);
         g.roleOptions=(g.roleOptions||[]).filter(x=>x.roleId!==role.id);
-        if(g.roleOptions.length>=5)return interaction.reply({content:'❌ 保存できるロールは最大5個です。先に `/role-remove` で削除してください。',ephemeral:true});
         g.roleOptions.push({roleId:role.id,label});
         saveStore(store);
         return interaction.reply({content:`✅ ${label} → ${role} を保存しました。`,ephemeral:true});
@@ -1141,28 +931,32 @@ AI生成機能は搭載していません。`
 
       if (n === 'social-source-add') {
         const g=guildData(store,interaction.guildId);
-        const platform=interaction.options.getString('platform',true);
         const profileUrl=interaction.options.getString('profile_url',true).trim();
         const channelUrl=interaction.options.getString('channel_url',true).trim();
-        const override=interaction.options.getString('rss_url')?.trim()||'';
         if(!validNewsUrl(profileUrl))return interaction.reply({content:'❌ プロフィールURLが正しくありません。',ephemeral:true});
+        const platform=detectSocialPlatform(profileUrl);
+        if(!platform)return interaction.reply({content:'❌ 対応URLではありません。X / Twitter・YouTube・Instagram のプロフィールURLを貼ってください。',ephemeral:true});
         const parsed=parseDiscordChannelUrl(channelUrl,interaction.guildId);
         if(!parsed)return interaction.reply({content:'❌ DiscordチャンネルURLが正しくないか、このサーバーのURLではありません。',ephemeral:true});
+        const ch=interaction.guild.channels.cache.get(parsed.channelId)||await interaction.guild.channels.fetch(parsed.channelId).catch(()=>null);
+        if(!ch?.isTextBased())return interaction.reply({content:'❌ 指定したDiscordチャンネルへ投稿できません。',ephemeral:true});
         await interaction.deferReply({ephemeral:true});
         try{
-          const feedUrl=await resolveSocialFeed(platform,profileUrl,override);
-          const feed=await rssParser.parseURL(feedUrl);
+          const resolved=await resolveSocialFeedAuto(platform,profileUrl);
+          const feed=await rssParser.parseURL(resolved.feedUrl);
           const id=g.nextSocialSourceId++;
-          const source={id,platform,profileUrl,feedUrl,channelId:parsed.channelId,createdAt:new Date().toISOString()};
+          const source={id,platform,profileUrl,feedUrl:resolved.feedUrl,method:resolved.method,channelId:parsed.channelId,enabled:true,createdAt:new Date().toISOString(),lastError:null};
           g.socialSources.push(source);
           g.socialSeen[id]=(feed.items||[]).slice(0,50).map(newsItemKey);
           saveStore(store);
-          return interaction.editReply(`✅ SNS最新情報 #${id} を登録しました。\nSNS: **${platform}**\nプロフィール: ${profileUrl}\n投稿先: <#${parsed.channelId}>\n次の新着から通知します。`);
+          const label=platform==='twitter'?'X / Twitter':platform==='youtube'?'YouTube':'Instagram';
+          return interaction.editReply(`✅ **${label}** と自動判定しました。\n取得方式: **${resolved.method}**\n投稿先: <#${parsed.channelId}>\n現在の投稿は既読登録し、次の最新情報から自動更新します。`);
         }catch(e){
-          console.error('social source add',e);
-          return interaction.editReply(`❌ SNSフィードを取得できませんでした。\n${e.message}\n\nX/InstagramはRSSブリッジ側の制限を受ける場合があります。その場合は \`rss_url\` に利用可能なRSS URLを指定できます。`);
+          console.error('social auto detect',e);
+          return interaction.editReply(`❌ SNSは判定できましたが、現在利用可能な最新情報取得経路を確立できませんでした。\n${e.message}`);
         }
       }
+
       if (n === 'social-source-remove') {
         const g=guildData(store,interaction.guildId),id=interaction.options.getInteger('id',true);
         const src=g.socialSources.find(x=>x.id===id);
@@ -1172,7 +966,7 @@ AI生成機能は搭載していません。`
       }
       if (n === 'social-list') {
         const g=guildData(store,interaction.guildId);
-        const lines=g.socialSources.map(s=>`**#${s.id} ${s.platform}**\n${s.profileUrl}\n投稿先: <#${s.channelId}>`);
+        const lines=g.socialSources.map(s=>`**#${s.id} ${s.platform}** ${s.enabled===false?'⏸️':'✅'}\n${s.profileUrl}\n取得: ${s.method||'自動'}\n投稿先: <#${s.channelId}>${s.lastError?`\n⚠️ ${s.lastError}`:''}`);
         const pages=splitDiscordBlocks(`📡 **SNS最新情報**\n登録: **${g.socialSources.length}件**`,lines,1900);
         await interaction.reply({content:pages[0],ephemeral:true});
         for(const p of pages.slice(1))await interaction.followUp({content:p,ephemeral:true});
@@ -1451,14 +1245,14 @@ AI生成機能は搭載していません。`
         return interaction.reply({content:`✅ 地震地域: ${g.earthquakeRegions.join(' / ')} / 最低震度 ${g.minIntensity}`,ephemeral:true});
       }
       if (n === 'earthquake-list') {
-        const g=guildData(store,interaction.guildId);return interaction.reply({content:`地域: ${g.earthquakeRegions.join(' / ')||'未登録'} / 最低震度 ${g.minIntensity}`,ephemeral:true});
+        const g=guildData(store,interaction.guildId);return interaction.reply({content:`地域: ${g.earthquakeRegions.join(' / ')||'全国（地域未設定のため）'} / 最低震度 ${g.minIntensity}`,ephemeral:true});
       }
       if (n === 'earthquake-auto') {
         const g=guildData(store,interaction.guildId);
         g.earthquakeAutoEnabled=interaction.options.getBoolean('enabled',true);
         saveStore(store);
         return interaction.reply({
-          content:`✅ 自動地震速報: ${g.earthquakeAutoEnabled?'ON':'OFF'}\n⚡ 新着地震を約${config.earthquakePollSeconds}秒間隔で監視し、取得後すぐ投稿します。`,
+          content:`✅ 自動地震速報: ${g.earthquakeAutoEnabled?'ON':'OFF'}\n対象: ${g.earthquakeRegions.length?g.earthquakeRegions.join(' / '):'全国（地域未設定）'}\n⚡ 新着地震を約${config.earthquakePollSeconds}秒間隔で監視し、取得後すぐ投稿します。`,
           ephemeral:true
         });
       }
@@ -1564,6 +1358,27 @@ ${url}`)],
         return interaction.reply(`🔊 音量を ${v}% に変更しました。`);
       }
       if (n === 'video') return interaction.reply(`🎬 ${interaction.options.getString('url',true)}`);
+    }
+
+    if (interaction.isStringSelectMenu() && interaction.customId.startsWith('rolepage:')) {
+      const roleId=interaction.values[0];
+      const role=await interaction.guild.roles.fetch(roleId).catch(()=>null);
+      if(!role)return interaction.reply({content:'❌ ロールが見つかりません。',ephemeral:true});
+      const problem=rolePanelProblem(interaction.guild,role);
+      if(problem)return interaction.reply({content:`❌ ${problem}`,ephemeral:true});
+      const member=await interaction.guild.members.fetch(interaction.user.id).catch(()=>null);
+      if(!member)return interaction.reply({content:'❌ メンバー情報を取得できません。',ephemeral:true});
+      try{
+        if(member.roles.cache.has(role.id)){
+          await member.roles.remove(role,'ロールパネルから解除');
+          return interaction.reply({content:`✅ **${role.name}** を外しました。`,ephemeral:true});
+        }
+        await member.roles.add(role,'ロールパネルから付与');
+        return interaction.reply({content:`✅ **${role.name}** を付与しました。`,ephemeral:true});
+      }catch(e){
+        console.error('role select panel error',e);
+        return interaction.reply({content:'❌ ロールを変更できません。BOTの「ロールの管理」権限とロール順序を確認してください。',ephemeral:true});
+      }
     }
 
     if (interaction.isStringSelectMenu() && interaction.customId.startsWith('shopselect:')) {
@@ -1752,6 +1567,31 @@ ${url}`)],
           }
         }
       }
+      if (kind === 'roleprev' || kind === 'rolenext') {
+        const g=guildData(store,interaction.guildId);
+        const valid=[];
+        for(const opt of (g.roleOptions||[])){
+          const role=await interaction.guild.roles.fetch(opt.roleId).catch(()=>null);
+          if(!role||rolePanelProblem(interaction.guild,role))continue;
+          valid.push({roleId:role.id,label:(opt.label||role.name).slice(0,100)});
+        }
+        const totalPages=Math.max(1,Math.ceil(valid.length/25));
+        let page=Number(a)||0;
+        page=kind==='rolenext'?page+1:page-1;
+        page=Math.max(0,Math.min(totalPages-1,page));
+        const slice=valid.slice(page*25,page*25+25);
+        if(!slice.length)return interaction.reply({content:'❌ 表示できるロールがありません。',ephemeral:true});
+        const menu=new StringSelectMenuBuilder().setCustomId(`rolepage:${page}`)
+          .setPlaceholder(`ロールを選択（${page+1}/${totalPages}ページ）`)
+          .addOptions(slice.map(x=>({label:x.label,value:x.roleId,description:'選択で付与 / 所持中なら解除'})));
+        const components=[new ActionRowBuilder().addComponents(menu)];
+        if(totalPages>1)components.push(new ActionRowBuilder().addComponents(
+          new ButtonBuilder().setCustomId(`roleprev:${page}`).setLabel('◀ 前へ').setStyle(ButtonStyle.Secondary).setDisabled(page===0),
+          new ButtonBuilder().setCustomId(`rolenext:${page}`).setLabel(`次へ ▶ (${page+1}/${totalPages})`).setStyle(ButtonStyle.Secondary).setDisabled(page>=totalPages-1)
+        ));
+        return interaction.update({components});
+      }
+
       if (kind === 'role') {
         const role=await interaction.guild.roles.fetch(a).catch(()=>null);
         if(!role){
@@ -2072,6 +1912,7 @@ setInterval(async()=>{
     for(const source of g.socialSources){
       try{
         const feed=await rssParser.parseURL(source.feedUrl);
+        source.lastError=null;
         const items=(feed.items||[]).slice(0,20),seen=new Set(g.socialSeen[source.id]||[]);
         const fresh=items.filter(i=>!seen.has(newsItemKey(i))).reverse();
         if(!fresh.length)continue;
@@ -2082,7 +1923,7 @@ setInterval(async()=>{
         }
         g.socialSeen[source.id]=[...new Set([...items.map(newsItemKey),...seen])].slice(0,100);
         saveStore(store);
-      }catch(e){console.error(`social watcher ${guild.id}/${source.id}`,e);}
+      }catch(e){source.lastError=String(e.message||e).slice(0,300);saveStore(store);console.error(`social watcher ${guild.id}/${source.id}`,e);}
     }
   }
 },60*1000);
@@ -2122,7 +1963,10 @@ setInterval(async()=>{
       const g=guildData(store,guild.id);
       if(!g.earthquakeAutoEnabled||!g.earthquakeChannelId)continue;
       if(maxN<Number(g.minIntensity||3))continue;
-      if(g.earthquakeRegions.length && !g.earthquakeRegions.some(r=>areaText.includes(r.replace(/[都道府県]$/,'')))) continue;
+      // 地域が1件も登録されていない場合は全国を対象にする。
+      // 1件以上登録されている場合だけ、その登録地域で絞り込む。
+      const earthquakeTargets=g.earthquakeRegions||[];
+      if(earthquakeTargets.length>0 && !earthquakeTargets.some(r=>areaText.includes(r.replace(/[都道府県]$/,'')))) continue;
       const quakeChannel=guild.channels.cache.get(g.earthquakeChannelId)
         || await guild.channels.fetch(g.earthquakeChannelId).catch(()=>null);
       if(quakeChannel?.isTextBased())await quakeChannel.send(earthquakeText(item)).catch(()=>{});

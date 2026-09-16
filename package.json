@@ -1,6 +1,6 @@
 {
-  "name": "discord-multibot-v5-11-zip-url-sales",
-  "version": "5.11.0",
+  "name": "discord-multibot-v5-14-2-earthquake-fixed",
+  "version": "5.14.2",
   "description": "Discord MultiBot v5.9 - enhanced vending, purchase tickets, sales feed and social profile RSS.",
   "type": "module",
   "main": "src/index.js",
