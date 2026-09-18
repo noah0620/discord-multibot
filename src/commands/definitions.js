@@ -95,13 +95,18 @@ export const commandData = [
     .addChannelOption(o=>o.setName('leave').setDescription('退出通知チャンネル').addChannelTypes(ChannelType.GuildText)),
   new SlashCommandBuilder().setName('join-leave-status').setDescription('【管理者】入退室通知設定を確認'),
 
-  new SlashCommandBuilder().setName('role-panel').setDescription('保存済みロールを全件ページ表示（登録数の上限なし）'),
-  new SlashCommandBuilder().setName('role-add').setDescription('ロールパネル用ロールを保存')
-    .addStringOption(o=>o.setName('label').setDescription('表示名').setRequired(true))
-    .addRoleOption(o=>o.setName('role').setDescription('ロール').setRequired(true)),
-  new SlashCommandBuilder().setName('role-list').setDescription('保存済みロール一覧'),
-  new SlashCommandBuilder().setName('role-remove').setDescription('保存済みロールを削除')
-    .addRoleOption(o=>o.setName('role').setDescription('ロール').setRequired(true)),
+  new SlashCommandBuilder().setName('role-panel').setDescription('【管理者】このチャンネル専用のボタン式ロールパネルを設置')
+    .addStringOption(o=>o.setName('title').setDescription('パネルタイトル').setRequired(false))
+    .addStringOption(o=>o.setName('description').setDescription('説明文').setRequired(false)),
+  new SlashCommandBuilder().setName('role-add').setDescription('【管理者】チャンネル専用ロールパネルにロールを追加')
+    .addStringOption(o=>o.setName('label').setDescription('ボタン名（例: A / ゲーム通知）').setRequired(true))
+    .addRoleOption(o=>o.setName('role').setDescription('付与するロール').setRequired(true))
+    .addChannelOption(o=>o.setName('channel').setDescription('対象チャンネル（省略時は現在のチャンネル）').addChannelTypes(ChannelType.GuildText)),
+  new SlashCommandBuilder().setName('role-list').setDescription('【管理者】チャンネル専用ロール一覧')
+    .addChannelOption(o=>o.setName('channel').setDescription('対象チャンネル（省略時は現在のチャンネル）').addChannelTypes(ChannelType.GuildText)),
+  new SlashCommandBuilder().setName('role-remove').setDescription('【管理者】チャンネル専用ロールを削除')
+    .addRoleOption(o=>o.setName('role').setDescription('ロール').setRequired(true))
+    .addChannelOption(o=>o.setName('channel').setDescription('対象チャンネル（省略時は現在のチャンネル）').addChannelTypes(ChannelType.GuildText)),
 
   new SlashCommandBuilder().setName('ticket-panel').setDescription('チケット作成パネル'),
   new SlashCommandBuilder().setName('ticket-settings').setDescription('チケットカテゴリ・サポートロール設定')

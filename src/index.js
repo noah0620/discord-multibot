@@ -26,7 +26,8 @@ const ADMIN_COMMANDS=new Set([
   'weather-auto-add','weather-auto-list','weather-auto-remove','weather-register','weather-admin','weather-channel','weather-channel-remove','weather-list','weather-auto',
   'earthquake-register','earthquake-list','earthquake-auto',
   'schedule-post','schedule-list','schedule-cancel',
-  'moderation-rule','moderation-list','moderation-remove'
+  'moderation-rule','moderation-list','moderation-remove',
+  'role-panel','role-add','role-list','role-remove'
 ]);
 
 function isGuildOwner(interaction){
@@ -66,6 +67,29 @@ function createFfmpegAudio(url){
   return {proc,resource};
 }
 
+
+function buildChannelRolePanel(channelId,cfg,valid,page=0){
+  const PAGE_SIZE=20;
+  const totalPages=Math.max(1,Math.ceil(valid.length/PAGE_SIZE));
+  page=Math.max(0,Math.min(totalPages-1,page));
+  const slice=valid.slice(page*PAGE_SIZE,page*PAGE_SIZE+PAGE_SIZE);
+  const lines=slice.map((x,i)=>`**${x.label}**：<@&${x.roleId}>`);
+  const desc=[cfg.description||'',...lines].filter(Boolean).join('\n');
+  const embed=new EmbedBuilder().setTitle(cfg.title||'チャンネルアクセス権限').setDescription(desc||'ボタンからロールを選択してください。');
+  const rows=[];
+  for(let i=0;i<slice.length;i+=5){
+    rows.push(new ActionRowBuilder().addComponents(...slice.slice(i,i+5).map(x=>
+      new ButtonBuilder().setCustomId(`role:${x.roleId}`).setLabel(x.label).setStyle(ButtonStyle.Primary)
+    )));
+  }
+  if(totalPages>1){
+    rows.push(new ActionRowBuilder().addComponents(
+      new ButtonBuilder().setCustomId(`rolepanelprev:${channelId}:${page}`).setLabel('◀ 前へ').setStyle(ButtonStyle.Secondary).setDisabled(page===0),
+      new ButtonBuilder().setCustomId(`rolepanelnext:${channelId}:${page}`).setLabel(`次へ ▶ ${page+1}/${totalPages}`).setStyle(ButtonStyle.Secondary).setDisabled(page>=totalPages-1)
+    ));
+  }
+  return {embeds:[embed],components:rows};
+}
 
 // Discordクライアント本体
 const client = new Client({
@@ -945,57 +969,55 @@ AI生成機能は搭載していません。`
 
       if (n === 'role-panel') {
         const g=guildData(store,interaction.guildId);
+        g.rolePanels ??= {};
+        const channelId=interaction.channelId;
+        const cfg=g.rolePanels[channelId] ??= {title:'チャンネルアクセス権限',description:'',roleOptions:[]};
+        const title=(interaction.options.getString('title')||cfg.title||'チャンネルアクセス権限').slice(0,256);
+        const description=(interaction.options.getString('description')??cfg.description??'').slice(0,2000);
+        cfg.title=title; cfg.description=description;
+        saveStore(store);
         const valid=[];
-        for(const opt of (g.roleOptions||[])){
+        for(const opt of (cfg.roleOptions||[])){
           const role=await interaction.guild.roles.fetch(opt.roleId).catch(()=>null);
-          if(!role)continue;
-          const problem=rolePanelProblem(interaction.guild,role);
-          if(!problem)valid.push({roleId:role.id,label:(opt.label||role.name).slice(0,100)});
+          if(!role||rolePanelProblem(interaction.guild,role))continue;
+          valid.push({roleId:role.id,label:(opt.label||role.name).slice(0,80),roleName:role.name});
         }
-        if(!valid.length)return interaction.reply({content:'❌ `/role-add` でロールを登録してください。',ephemeral:true});
-        const page=0,totalPages=Math.ceil(valid.length/25),slice=valid.slice(0,25);
-        const menu=new StringSelectMenuBuilder()
-          .setCustomId(`rolepage:${page}`)
-          .setPlaceholder(`ロールを選択（1/${totalPages}ページ）`)
-          .addOptions(slice.map(x=>({label:x.label,value:x.roleId,description:'選択で付与 / 所持中なら解除'})));
-        const components=[new ActionRowBuilder().addComponents(menu)];
-        components.push(new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId(`rolerefresh:${page}`).setLabel('🔄 登録ロールを更新').setStyle(ButtonStyle.Secondary)));
-        if(totalPages>1)components.push(new ActionRowBuilder().addComponents(
-          new ButtonBuilder().setCustomId(`roleprev:${page}`).setLabel('◀ 前へ').setStyle(ButtonStyle.Secondary).setDisabled(true),
-          new ButtonBuilder().setCustomId(`rolenext:${page}`).setLabel(`次へ ▶ (${page+1}/${totalPages})`).setStyle(ButtonStyle.Secondary)
-        ));
-        return interaction.reply({
-          embeds:[new EmbedBuilder().setTitle('🎭 ロール選択').setDescription(`登録ロール: **${valid.length}個**\nプルダウンから選択すると付与、所持中のロールを選択すると解除します。`)],
-          components
-        });
+        if(!valid.length)return interaction.reply({content:'❌ このチャンネルにはロールがありません。先に `/role-add` をこのチャンネルで実行してください。',ephemeral:true});
+        const page=0;
+        return interaction.reply(buildChannelRolePanel(channelId,cfg,valid,page));
       }
 
       if (n === 'role-add') {
-        const g=guildData(store,interaction.guildId);
+        const g=guildData(store,interaction.guildId); g.rolePanels ??= {};
+        const target=interaction.options.getChannel('channel')||interaction.channel;
+        const cfg=g.rolePanels[target.id] ??= {title:'チャンネルアクセス権限',description:'',roleOptions:[]};
         const role=interaction.options.getRole('role',true);
         const problem=rolePanelProblem(interaction.guild,role);
         if(problem)return interaction.reply({content:`❌ ${problem}`,ephemeral:true});
-
         const label=interaction.options.getString('label',true).slice(0,80);
-        g.roleOptions=(g.roleOptions||[]).filter(x=>x.roleId!==role.id);
-        g.roleOptions.push({roleId:role.id,label});
+        cfg.roleOptions=(cfg.roleOptions||[]).filter(x=>x.roleId!==role.id);
+        cfg.roleOptions.push({roleId:role.id,label});
         saveStore(store);
-        return interaction.reply({content:`✅ ${label} → ${role} を保存しました。現在 **${g.roleOptions.length}件**。既存パネルの「🔄 登録ロールを更新」で反映できます。`,ephemeral:true});
+        return interaction.reply({content:`✅ <#${target.id}> 専用パネルに **${label}** → ${role} を追加しました。現在 **${cfg.roleOptions.length}件**。\nパネルを更新する場合は、そのチャンネルで \`/role-panel\` を実行してください。`,ephemeral:true});
       }
 
       if (n === 'role-list') {
-        const g=guildData(store,interaction.guildId);
-        const lines=(g.roleOptions||[]).map((x,i)=>`${i+1}. **${x.label}** → <@&${x.roleId}>`);
-        return interaction.reply({content:lines.join('\n')||'保存済みロールはありません。',ephemeral:true});
+        const g=guildData(store,interaction.guildId); g.rolePanels ??= {};
+        const target=interaction.options.getChannel('channel')||interaction.channel;
+        const cfg=g.rolePanels[target.id]||{roleOptions:[]};
+        const lines=(cfg.roleOptions||[]).map((x,i)=>`${i+1}. **${x.label}** → <@&${x.roleId}>`);
+        return interaction.reply({content:`🎭 <#${target.id}> のロール設定\n${lines.join('\n')||'保存済みロールはありません。'}`,ephemeral:true});
       }
 
       if (n === 'role-remove') {
-        const g=guildData(store,interaction.guildId);
+        const g=guildData(store,interaction.guildId); g.rolePanels ??= {};
+        const target=interaction.options.getChannel('channel')||interaction.channel;
+        const cfg=g.rolePanels[target.id] ??= {title:'チャンネルアクセス権限',description:'',roleOptions:[]};
         const role=interaction.options.getRole('role',true);
-        const before=(g.roleOptions||[]).length;
-        g.roleOptions=(g.roleOptions||[]).filter(x=>x.roleId!==role.id);
+        const before=(cfg.roleOptions||[]).length;
+        cfg.roleOptions=(cfg.roleOptions||[]).filter(x=>x.roleId!==role.id);
         saveStore(store);
-        return interaction.reply({content:before!==g.roleOptions.length?'✅ 保存済みロールを削除しました。':'❌ 登録されていません。',ephemeral:true});
+        return interaction.reply({content:before!==cfg.roleOptions.length?`✅ <#${target.id}> から ${role} を削除しました。`:'❌ このチャンネルには登録されていません。',ephemeral:true});
       }
 
       if (n === 'ticket-panel') {
@@ -1766,6 +1788,23 @@ ${url}`)],
           }
         }
       }
+      if (kind === 'rolepanelprev' || kind === 'rolepanelnext') {
+        const channelId=a;
+        const g=guildData(store,interaction.guildId); g.rolePanels ??= {};
+        const cfg=g.rolePanels[channelId];
+        if(!cfg)return interaction.reply({content:'❌ このロールパネル設定が見つかりません。',ephemeral:true});
+        const valid=[];
+        for(const opt of (cfg.roleOptions||[])){
+          const role=await interaction.guild.roles.fetch(opt.roleId).catch(()=>null);
+          if(!role||rolePanelProblem(interaction.guild,role))continue;
+          valid.push({roleId:role.id,label:(opt.label||role.name).slice(0,80),roleName:role.name});
+        }
+        if(!valid.length)return interaction.reply({content:'❌ 表示できるロールがありません。',ephemeral:true});
+        let page=Number(b)||0;
+        page += kind==='rolepanelnext'?1:-1;
+        return interaction.update(buildChannelRolePanel(channelId,cfg,valid,page));
+      }
+
       if (kind === 'roleprev' || kind === 'rolenext' || kind === 'rolerefresh') {
         const g=guildData(store,interaction.guildId);
         const valid=[];
