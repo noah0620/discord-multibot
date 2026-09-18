@@ -2,6 +2,14 @@ import { SlashCommandBuilder, PermissionFlagsBits, ChannelType } from 'discord.j
 
 export const commandData = [
   new SlashCommandBuilder().setName('help').setDescription('BOTの機能一覧を表示'),
+  new SlashCommandBuilder().setName('supportchannel').setDescription('サポートサーバーの招待リンクを表示'),
+  new SlashCommandBuilder().setName('weather-auto-add').setDescription('【管理者】天気の自動投稿を複数登録')
+    .addStringOption(o=>o.setName('region').setDescription('都道府県・地方・全国').setRequired(true))
+    .addChannelOption(o=>o.setName('channel').setDescription('投稿先').setRequired(true).addChannelTypes(ChannelType.GuildText))
+    .addStringOption(o=>o.setName('time').setDescription('日本時間 HH:MM').setRequired(true)),
+  new SlashCommandBuilder().setName('weather-auto-list').setDescription('【管理者】複数天気投稿設定を一覧表示'),
+  new SlashCommandBuilder().setName('weather-auto-remove').setDescription('【管理者】天気自動投稿設定を削除')
+    .addIntegerOption(o=>o.setName('id').setDescription('設定ID').setRequired(true)),
   new SlashCommandBuilder().setName('ping').setDescription('BOT応答確認'),
   new SlashCommandBuilder().setName('owner-status').setDescription('BOTオーナー判定を確認'),
   new SlashCommandBuilder().setName('admin-role-set').setDescription('【鯖主】管理者コマンドを使えるロールを設定')

@@ -23,7 +23,7 @@ const ADMIN_COMMANDS=new Set([
   'autoreply-add','autoreply-remove','autoreply-list','guild-settings','guild-status','setting',
   'social-source-add','social-source-remove','social-list','social-test',
   'news-source-add','news-source-remove','news-list','news-auto','news-test',
-  'weather-register','weather-admin','weather-channel','weather-channel-remove','weather-list','weather-auto',
+  'weather-auto-add','weather-auto-list','weather-auto-remove','weather-register','weather-admin','weather-channel','weather-channel-remove','weather-list','weather-auto',
   'earthquake-register','earthquake-list','earthquake-auto',
   'schedule-post','schedule-list','schedule-cancel',
   'moderation-rule','moderation-list','moderation-remove'
@@ -81,7 +81,7 @@ const client = new Client({
 
 const rssParser=new Parser({timeout:15000,headers:{'User-Agent':'NoahXJP-Discord-NewsBot/1.0'}});
 
-const P2PQUAKE_HISTORY_URL='https://api.p2pquake.net/v2/history?codes=551&limit=1';
+const P2PQUAKE_HISTORY_URL='https://api.p2pquake.net/v2/history?codes=551&limit=10';
 
 async function fetchLatestEarthquake(){
   const res=await fetch(P2PQUAKE_HISTORY_URL,{headers:{'User-Agent':'NoahXJP-DiscordBot/5.14.2'}});
@@ -382,6 +382,7 @@ client.on(Events.InteractionCreate, async interaction => {
         });
       }
 
+      if (n === 'supportchannel') return interaction.reply({content:'🆘 サポートサーバー: https://discord.gg/KGhYc6cWmq',ephemeral:true});
       if (n === 'help') {
         return interaction.reply({
           embeds:[new EmbedBuilder()
@@ -433,10 +434,13 @@ client.on(Events.InteractionCreate, async interaction => {
 🔧 **動作診断**
 /diagnostics
 
+🆘 サポート: https://discord.gg/KGhYc6cWmq
+
 補助: /video
 AI生成機能は搭載していません。`
             )
           ],
+          components:[new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId('support_help').setLabel('🆘 サポート').setStyle(ButtonStyle.Primary))],
           ephemeral:true
         });
       }
@@ -1307,6 +1311,28 @@ AI生成機能は搭載していません。`
         return;
       }
 
+      if (n === 'weather-auto-add') {
+        const g=guildData(store,interaction.guildId);
+        const region=interaction.options.getString('region',true).trim();
+        const regions=expandWeatherRegion(region);
+        if(!regions.length)return interaction.reply({content:'❌ 地域名が正しくありません。',ephemeral:true});
+        const time=interaction.options.getString('time',true).trim();
+        if(!/^(?:[01]\d|2[0-3]):[0-5]\d$/.test(time))return interaction.reply({content:'❌ 時刻は HH:MM で指定してください。',ephemeral:true});
+        g.weatherJobs??=[];
+        const id=Math.max(0,...g.weatherJobs.map(x=>x.id))+1;
+        const channelId=interaction.options.getChannel('channel',true).id;
+        g.weatherJobs.push({id,regions,channelId,time,lastSent:null});saveStore(store);
+        return interaction.reply({content:`✅ 天気設定 #${id} を追加: ${region} / <#${channelId}> / ${time} JST`,ephemeral:true});
+      }
+      if(n==='weather-auto-list'){
+        const jobs=guildData(store,interaction.guildId).weatherJobs||[];
+        return interaction.reply({content:jobs.length?jobs.map(j=>`#${j.id} ${j.regions.join('、')} → <#${j.channelId}> ${j.time} JST`).join('\n').slice(0,1900):'登録なし',ephemeral:true});
+      }
+      if(n==='weather-auto-remove'){
+        const g=guildData(store,interaction.guildId),id=interaction.options.getInteger('id',true);
+        const before=(g.weatherJobs||[]).length;g.weatherJobs=(g.weatherJobs||[]).filter(j=>j.id!==id);saveStore(store);
+        return interaction.reply({content:before===g.weatherJobs.length?'❌ 設定IDが見つかりません。':`✅ 設定 #${id} を削除しました。`,ephemeral:true});
+      }
       if (n === 'weather-auto') {
         const g=guildData(store,interaction.guildId);
         const enabled=interaction.options.getBoolean('enabled',true);
@@ -1483,6 +1509,7 @@ ${url}`)],
       if (n === 'video') return interaction.reply(`🎬 ${interaction.options.getString('url',true)}`);
     }
 
+    if (interaction.isButton() && interaction.customId==='support_help') return interaction.reply({content:'🆘 サポートサーバー: https://discord.gg/KGhYc6cWmq',ephemeral:true});
     if (interaction.isStringSelectMenu() && interaction.customId.startsWith('rolepage:')) {
       const roleId=interaction.values[0];
       const role=await interaction.guild.roles.fetch(roleId).catch(()=>null);
@@ -1898,7 +1925,7 @@ ${url}`)],
       if(p.stock>=0 && qty>p.stock)return interaction.reply({content:`❌ 在庫不足です。現在 ${p.stock} 個です。`,ephemeral:true});
       if(!paypay.startsWith('https://pay.paypay.ne.jp/'))return interaction.reply({content:'❌ PayPay受け取りURLを入力してください。',ephemeral:true});
       const id=store.nextOrderId++;
-      const order={id,guildId:interaction.guildId,shopId:Number(shopId),productId,userId:interaction.user.id,qty,total:p.price*qty,paypay,status:'pending',createdAt:new Date().toISOString(),ticketChannelId:null};
+      const order={id,guildId:interaction.guildId,shopId:Number(shopId),productId,userId:interaction.user.id,buyerUsername:interaction.user.username,buyerDisplayName:interaction.user.globalName||interaction.user.username,qty,total:p.price*qty,paypay,status:'pending',createdAt:new Date().toISOString(),ticketChannelId:null};
       store.orders[id]=order;
 
       // 購入者・販売者・BOTだけが閲覧できる購入専用チケット
@@ -1925,7 +1952,7 @@ ${url}`)],
       saveStore(store);
       const orderEmbed=new EmbedBuilder()
         .setTitle(`💰 注文 #${id}`)
-        .setDescription(`販売者: <@${shop.ownerId}>\n購入者: <@${interaction.user.id}>\n商品: **${p.name}**\n数量: **${qty}**\n合計: **¥${order.total.toLocaleString()}**\n配布方式: **${p.deliveryMode==='zip'?'ZIP':p.deliveryMode==='gigafile'?'ギガファイル便':p.deliveryMode==='url'?'URL':'手動'}**\nPayPay: ${paypay}`)
+        .setDescription(`販売者: <@${shop.ownerId}>\n購入者: <@${interaction.user.id}>（${interaction.user.username} / ID: ${interaction.user.id}）\n商品: **${p.name}**\n数量: **${qty}**\n合計: **¥${order.total.toLocaleString()}**\n配布方式: **${p.deliveryMode==='zip'?'ZIP':p.deliveryMode==='gigafile'?'ギガファイル便':p.deliveryMode==='url'?'URL':'手動'}**\nPayPay: ${paypay}`)
         .setTimestamp();
       if(p.imageUrl&&validHttpUrl(p.imageUrl))orderEmbed.setThumbnail(p.imageUrl);
       const controls=new ActionRowBuilder().addComponents(
@@ -2123,10 +2150,21 @@ async function runWeatherWatcher(){
 
     for(const guild of client.guilds.cache.values()){
       const g=guildData(store,guild.id);
+      for(const job of (g.weatherJobs||[])){
+        if(currentTime<job.time || job.lastSent===dateKey)continue;
+        try{
+          const ch=await guild.channels.fetch(job.channelId).catch(()=>null);
+          if(!ch?.isTextBased())continue;
+          const pages=await buildWeatherPages(job.regions);
+          for(const page of pages)await ch.send(page);
+          job.lastSent=dateKey;saveStore(store);
+          console.log(`🌤️ 天気追加設定 #${job.id} 投稿成功`);
+        }catch(error){console.error(`❌ 天気追加設定 #${job.id}`,error);}
+      }
       if(!g.weatherAutoEnabled)continue;
       if(!(g.weatherRegions||[]).length){console.warn(`⚠️ 天気自動投稿 ${guild.id}: 地域未登録`);continue;}
       const postTime=g.weatherAutoTime||'07:00';
-      if(currentTime!==postTime||g.lastWeatherPostDate===dateKey)continue;
+      if(currentTime<postTime||g.lastWeatherPostDate===dateKey)continue;
 
       g.weatherChannelRoutes??={};
       const groups=new Map();

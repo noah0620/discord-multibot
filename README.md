@@ -22,3 +22,11 @@ npm install
 npm run deploy-commands
 npm start
 ```
+
+## 追加機能（今回）
+- `/weather-auto-add region:東京都 channel:#天気 time:07:00`：地域・チャンネル・時刻の組み合わせを複数登録。`/weather-auto-list` で確認、`/weather-auto-remove id:` で削除。既存 `/weather-auto` は維持。
+- `/supportchannel` または `/help` のサポートボタン：指定の招待リンクを表示。
+- 注文記録に購入者の Discord ID・ユーザー名を保存。購入時の注文通知にも表示。
+- ロールパネルは従来どおり `/role-add` で追加し、25件ごとにページ分割。Discord の1メニュー25件制限に対応。
+- 自動投稿にはBOTのチャンネル閲覧・メッセージ送信権限が必要。起動し続ける環境で `npm run deploy-commands` のあと `npm start` を実行。
+- 既存の `data/store.json` は上書きしないでください。実際のDiscordへの送信は接続情報がないため未検証です。
