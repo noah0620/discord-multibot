@@ -95,17 +95,7 @@ export const commandData = [
     .addChannelOption(o=>o.setName('leave').setDescription('退出通知チャンネル').addChannelTypes(ChannelType.GuildText)),
   new SlashCommandBuilder().setName('join-leave-status').setDescription('【管理者】入退室通知設定を確認'),
 
-  new SlashCommandBuilder().setName('role-panel').setDescription('最大5ロールの選択パネル')
-    .addRoleOption(o=>o.setName('role1').setDescription('ロール1（省略時は保存済みロール）'))
-    .addStringOption(o=>o.setName('label1').setDescription('表示名1'))
-    .addRoleOption(o=>o.setName('role2').setDescription('ロール2'))
-    .addStringOption(o=>o.setName('label2').setDescription('表示名2'))
-    .addRoleOption(o=>o.setName('role3').setDescription('ロール3'))
-    .addStringOption(o=>o.setName('label3').setDescription('表示名3'))
-    .addRoleOption(o=>o.setName('role4').setDescription('ロール4'))
-    .addStringOption(o=>o.setName('label4').setDescription('表示名4'))
-    .addRoleOption(o=>o.setName('role5').setDescription('ロール5'))
-    .addStringOption(o=>o.setName('label5').setDescription('表示名5')),
+  new SlashCommandBuilder().setName('role-panel').setDescription('保存済みロールを全件ページ表示（登録数の上限なし）'),
   new SlashCommandBuilder().setName('role-add').setDescription('ロールパネル用ロールを保存')
     .addStringOption(o=>o.setName('label').setDescription('表示名').setRequired(true))
     .addRoleOption(o=>o.setName('role').setDescription('ロール').setRequired(true)),

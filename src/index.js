@@ -154,21 +154,80 @@ function weatherCodeLabel(code){
   return ['🌤️','天気'];
 }
 
+// 都道府県の代表地点を固定。地名検索APIの曖昧な一致・取得失敗を回避する。
+const WEATHER_COORDINATES = [
+  [43.0621,141.3544],
+  [40.8244,140.74],
+  [39.7036,141.1527],
+  [38.2682,140.8694],
+  [39.7186,140.1024],
+  [38.2404,140.3633],
+  [37.7608,140.4748],
+  [36.3659,140.4712],
+  [36.5551,139.8828],
+  [36.3895,139.0634],
+  [35.8617,139.6455],
+  [35.6074,140.1065],
+  [35.6895,139.6917],
+  [35.4437,139.638],
+  [37.9161,139.0364],
+  [36.6953,137.2113],
+  [36.5613,136.6562],
+  [36.0641,136.2196],
+  [35.6639,138.5684],
+  [36.6513,138.181],
+  [35.4233,136.7606],
+  [34.9756,138.3828],
+  [35.1815,136.9066],
+  [34.7303,136.5086],
+  [35.0045,135.8686],
+  [35.0116,135.7681],
+  [34.6937,135.5023],
+  [34.6901,135.1955],
+  [34.6851,135.8048],
+  [34.2304,135.1707],
+  [35.5039,134.2377],
+  [35.4723,133.0505],
+  [34.6552,133.9195],
+  [34.3853,132.4553],
+  [34.1858,131.4714],
+  [34.0703,134.5548],
+  [34.3401,134.0434],
+  [33.8416,132.7657],
+  [33.5597,133.5311],
+  [33.5904,130.4017],
+  [33.2635,130.3009],
+  [32.7503,129.8777],
+  [32.8031,130.7079],
+  [33.2382,131.6126],
+  [31.9111,131.4239],
+  [31.5966,130.5571],
+  [26.2124,127.6809]
+];
+const weatherCache = new Map();
 async function fetchWeatherPrefecture(pref){
-  const row=PREFECTURES.find(([name])=>name===pref);
-  if(!row)throw new Error(`都道府県が見つかりません: ${pref}`);
-  const [,capital]=row;
-  const geoUrl=`https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(capital)}&count=1&language=ja&format=json`;
-  const geoRes=await fetch(geoUrl);
-  if(!geoRes.ok)throw new Error(`Open-Meteo geocoding HTTP ${geoRes.status}`);
-  const geo=await geoRes.json(),loc=geo.results?.[0];
-  if(!loc)throw new Error(`${capital} の位置情報を取得できません`);
-  const url=`https://api.open-meteo.com/v1/forecast?latitude=${loc.latitude}&longitude=${loc.longitude}&daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_sum,precipitation_probability_max&timezone=Asia%2FTokyo&forecast_days=2`;
-  const res=await fetch(url);
-  if(!res.ok)throw new Error(`Open-Meteo forecast HTTP ${res.status}`);
-  const data=await res.json(),d=data.daily||{};
-  const [icon,label]=weatherCodeLabel(d.weather_code?.[0]);
-  return {pref,capital,icon,label,min:d.temperature_2m_min?.[0],max:d.temperature_2m_max?.[0],rain:d.precipitation_sum?.[0],prob:d.precipitation_probability_max?.[0]};
+  const index=PREFECTURES.findIndex(([name])=>name===pref);
+  if(index<0)throw new Error(`都道府県が見つかりません: ${pref}`);
+  const [,capital]=PREFECTURES[index];
+  const cached=weatherCache.get(pref);
+  if(cached && Date.now()-cached.at<10*60*1000)return cached.value;
+  const [latitude,longitude]=WEATHER_COORDINATES[index];
+  const url=new URL('https://api.open-meteo.com/v1/forecast');
+  url.search=new URLSearchParams({latitude:String(latitude),longitude:String(longitude),daily:'weather_code,temperature_2m_max,temperature_2m_min,precipitation_sum,precipitation_probability_max',timezone:'Asia/Tokyo',forecast_days:'2'}).toString();
+  let lastError;
+  for(let attempt=0;attempt<3;attempt++){
+    try{
+      const res=await fetch(url,{signal:AbortSignal.timeout(12000)});
+      if(!res.ok)throw new Error(`Open-Meteo forecast HTTP ${res.status}`);
+      const data=await res.json(),d=data.daily||{};
+      if(!d.time?.[0] || !Number.isFinite(d.temperature_2m_max?.[0]) || !Number.isFinite(d.temperature_2m_min?.[0]))throw new Error('予報データが不足しています');
+      const [icon,label]=weatherCodeLabel(d.weather_code?.[0]);
+      const value={pref,capital,icon,label,min:d.temperature_2m_min[0],max:d.temperature_2m_max[0],rain:d.precipitation_sum?.[0],prob:d.precipitation_probability_max?.[0]};
+      weatherCache.set(pref,{at:Date.now(),value});
+      return value;
+    }catch(e){lastError=e;if(attempt<2)await new Promise(resolve=>setTimeout(resolve,500*(attempt+1)));}
+  }
+  throw lastError;
 }
 
 async function buildWeatherPages(regions){
@@ -886,17 +945,6 @@ AI生成機能は搭載していません。`
 
       if (n === 'role-panel') {
         const g=guildData(store,interaction.guildId);
-        // 従来の直接指定 role1〜role5 も保存一覧へ取り込み可能
-        for(let x=1;x<=5;x++){
-          const role=interaction.options.getRole(`role${x}`);
-          if(!role)continue;
-          const problem=rolePanelProblem(interaction.guild,role);
-          if(problem)return interaction.reply({content:`❌ ${role.name}: ${problem}`,ephemeral:true});
-          const label=(interaction.options.getString(`label${x}`)||role.name).slice(0,80);
-          g.roleOptions=(g.roleOptions||[]).filter(o=>o.roleId!==role.id);
-          g.roleOptions.push({roleId:role.id,label});
-        }
-        saveStore(store);
         const valid=[];
         for(const opt of (g.roleOptions||[])){
           const role=await interaction.guild.roles.fetch(opt.roleId).catch(()=>null);
@@ -911,6 +959,7 @@ AI生成機能は搭載していません。`
           .setPlaceholder(`ロールを選択（1/${totalPages}ページ）`)
           .addOptions(slice.map(x=>({label:x.label,value:x.roleId,description:'選択で付与 / 所持中なら解除'})));
         const components=[new ActionRowBuilder().addComponents(menu)];
+        components.push(new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId(`rolerefresh:${page}`).setLabel('🔄 登録ロールを更新').setStyle(ButtonStyle.Secondary)));
         if(totalPages>1)components.push(new ActionRowBuilder().addComponents(
           new ButtonBuilder().setCustomId(`roleprev:${page}`).setLabel('◀ 前へ').setStyle(ButtonStyle.Secondary).setDisabled(true),
           new ButtonBuilder().setCustomId(`rolenext:${page}`).setLabel(`次へ ▶ (${page+1}/${totalPages})`).setStyle(ButtonStyle.Secondary)
@@ -931,7 +980,7 @@ AI生成機能は搭載していません。`
         g.roleOptions=(g.roleOptions||[]).filter(x=>x.roleId!==role.id);
         g.roleOptions.push({roleId:role.id,label});
         saveStore(store);
-        return interaction.reply({content:`✅ ${label} → ${role} を保存しました。`,ephemeral:true});
+        return interaction.reply({content:`✅ ${label} → ${role} を保存しました。現在 **${g.roleOptions.length}件**。既存パネルの「🔄 登録ロールを更新」で反映できます。`,ephemeral:true});
       }
 
       if (n === 'role-list') {
@@ -1717,7 +1766,7 @@ ${url}`)],
           }
         }
       }
-      if (kind === 'roleprev' || kind === 'rolenext') {
+      if (kind === 'roleprev' || kind === 'rolenext' || kind === 'rolerefresh') {
         const g=guildData(store,interaction.guildId);
         const valid=[];
         for(const opt of (g.roleOptions||[])){
@@ -1727,7 +1776,7 @@ ${url}`)],
         }
         const totalPages=Math.max(1,Math.ceil(valid.length/25));
         let page=Number(a)||0;
-        page=kind==='rolenext'?page+1:page-1;
+        page=kind==='rolenext'?page+1:kind==='roleprev'?page-1:page;
         page=Math.max(0,Math.min(totalPages-1,page));
         const slice=valid.slice(page*25,page*25+25);
         if(!slice.length)return interaction.reply({content:'❌ 表示できるロールがありません。',ephemeral:true});
@@ -1735,11 +1784,12 @@ ${url}`)],
           .setPlaceholder(`ロールを選択（${page+1}/${totalPages}ページ）`)
           .addOptions(slice.map(x=>({label:x.label,value:x.roleId,description:'選択で付与 / 所持中なら解除'})));
         const components=[new ActionRowBuilder().addComponents(menu)];
+        components.push(new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId(`rolerefresh:${page}`).setLabel('🔄 登録ロールを更新').setStyle(ButtonStyle.Secondary)));
         if(totalPages>1)components.push(new ActionRowBuilder().addComponents(
           new ButtonBuilder().setCustomId(`roleprev:${page}`).setLabel('◀ 前へ').setStyle(ButtonStyle.Secondary).setDisabled(page===0),
           new ButtonBuilder().setCustomId(`rolenext:${page}`).setLabel(`次へ ▶ (${page+1}/${totalPages})`).setStyle(ButtonStyle.Secondary).setDisabled(page>=totalPages-1)
         ));
-        return interaction.update({components});
+        return interaction.update({components,embeds:[new EmbedBuilder().setTitle('🎭 ロール選択').setDescription(`登録ロール: **${valid.length}個**\nプルダウンから選択すると付与、所持中なら解除します。`)]});
       }
 
       if (kind === 'role') {
