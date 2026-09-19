@@ -57,6 +57,7 @@ export function guildData(store, guildId) {
     ticketSupportRoleId: null,
     roleOptions: [],
     rolePanels: {},
+    verificationPanels: {},
     earthquakeChannelId: null,
     weatherChannelId: null,
     autoReplies: {},
@@ -102,6 +103,7 @@ export function guildData(store, guildId) {
   g.ticketSupportRoleId ??= null;
   g.roleOptions ??= [];
   g.rolePanels ??= {};
+  g.verificationPanels ??= {};
   store.verificationRequests ??= {};
   store.nextVerificationRequestId ??= 1;
   store.tickets ??= {};

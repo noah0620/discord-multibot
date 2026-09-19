@@ -21,14 +21,16 @@ export const commandData = [
     .addStringOption(o=>o.setName('name').setDescription('自動販売機名').setRequired(true))
     .addRoleOption(o=>o.setName('manager_role').setDescription('管理ロール'))
     .addChannelOption(o=>o.setName('order_channel').setDescription('販売者への注文通知先').addChannelTypes(ChannelType.GuildText))
-    .addChannelOption(o=>o.setName('sales_channel').setDescription('購入実績の配信先').addChannelTypes(ChannelType.GuildText)),
+    .addChannelOption(o=>o.setName('sales_channel').setDescription('購入実績の配信先').addChannelTypes(ChannelType.GuildText))
+    .addChannelOption(o=>o.setName('history_channel').setDescription('管理者用の購入履歴固定チャンネル').addChannelTypes(ChannelType.GuildText)),
   new SlashCommandBuilder().setName('shop-list').setDescription('このサーバーの自動販売機一覧'),
   new SlashCommandBuilder().setName('shop-config').setDescription('自動販売機設定')
     .addIntegerOption(o=>o.setName('shop_id').setDescription('自販機ID').setRequired(true))
     .addStringOption(o=>o.setName('name').setDescription('新しい自販機名'))
     .addRoleOption(o=>o.setName('manager_role').setDescription('管理ロール'))
     .addChannelOption(o=>o.setName('order_channel').setDescription('販売者への注文通知先').addChannelTypes(ChannelType.GuildText))
-    .addChannelOption(o=>o.setName('sales_channel').setDescription('購入実績の配信先').addChannelTypes(ChannelType.GuildText)),
+    .addChannelOption(o=>o.setName('sales_channel').setDescription('購入実績の配信先').addChannelTypes(ChannelType.GuildText))
+    .addChannelOption(o=>o.setName('history_channel').setDescription('管理者用の購入履歴固定チャンネル').addChannelTypes(ChannelType.GuildText)),
   new SlashCommandBuilder().setName('shop-delete').setDescription('自動販売機を停止')
     .addIntegerOption(o=>o.setName('shop_id').setDescription('自販機ID').setRequired(true)),
   new SlashCommandBuilder().setName('shop-admin').setDescription('【管理者】自販機・注文状況を確認'),
@@ -83,8 +85,10 @@ export const commandData = [
   new SlashCommandBuilder().setName('shop-panel').setDescription('販売パネル設置')
     .addIntegerOption(o=>o.setName('shop_id').setDescription('自販機ID').setRequired(true)),
 
-  new SlashCommandBuilder().setName('verify-panel').setDescription('認証パネルを設置')
-    .addRoleOption(o=>o.setName('role').setDescription('認証後に付与するロール').setRequired(true))
+  new SlashCommandBuilder().setName('verify-panel').setDescription('用途を指定した認証申請パネルを設置')
+    .addStringOption(o=>o.setName('name').setDescription('申請名（例: R18閲覧 / 配信者申請）').setRequired(true))
+    .addStringOption(o=>o.setName('description').setDescription('申請条件・説明'))
+    .addRoleOption(o=>o.setName('role').setDescription('承認後に付与するロール').setRequired(true))
     .addChannelOption(o=>o.setName('approval_channel').setDescription('認証申請の承認通知を送るチャンネル').setRequired(true).addChannelTypes(ChannelType.GuildText)),
   new SlashCommandBuilder().setName('verify-admin').setDescription('【管理者】認証申請を確認・承認'),
   new SlashCommandBuilder().setName('verify-status').setDescription('【管理者】認証パネル設定を確認'),
@@ -111,6 +115,27 @@ export const commandData = [
   new SlashCommandBuilder().setName('role-remove').setDescription('【管理者】チャンネル専用ロールを削除')
     .addRoleOption(o=>o.setName('role').setDescription('ロール').setRequired(true))
     .addChannelOption(o=>o.setName('channel').setDescription('対象チャンネル（省略時は現在のチャンネル）').addChannelTypes(ChannelType.GuildText)),
+
+
+  new SlashCommandBuilder().setName('role-create').setDescription('【管理者】ロールを作成（実行後にカラーパネル表示）')
+    .addStringOption(o=>o.setName('name').setDescription('ロール名').setRequired(true))
+    .addStringOption(o=>o.setName('permission').setDescription('権限プリセット').addChoices(
+      {name:'権限なし',value:'none'},{name:'一般（メッセージ等）',value:'member'},{name:'モデレーター',value:'moderator'},{name:'管理者',value:'administrator'}
+    ))
+    .addBooleanOption(o=>o.setName('mentionable').setDescription('メンション可能にする'))
+    .addBooleanOption(o=>o.setName('hoist').setDescription('メンバー一覧で分けて表示')),
+  new SlashCommandBuilder().setName('role-delete').setDescription('【管理者】ロールを削除')
+    .addRoleOption(o=>o.setName('role').setDescription('削除するロール').setRequired(true)),
+  new SlashCommandBuilder().setName('weather-setup').setDescription('【管理者】天気自動投稿を簡単設定')
+    .addStringOption(o=>o.setName('area').setDescription('全国または地方').setRequired(true).addChoices(
+      {name:'全国47都道府県',value:'全国'},{name:'北海道地方',value:'北海道地方'},{name:'東北地方',value:'東北地方'},{name:'関東地方',value:'関東地方'},{name:'中部地方',value:'中部地方'},{name:'近畿地方',value:'近畿地方'},{name:'中国地方',value:'中国地方'},{name:'四国地方',value:'四国地方'},{name:'九州地方',value:'九州地方'},{name:'沖縄県',value:'沖縄県'}))
+    .addChannelOption(o=>o.setName('channel').setDescription('投稿先').setRequired(true).addChannelTypes(ChannelType.GuildText))
+    .addStringOption(o=>o.setName('time').setDescription('JST HH:MM').setRequired(true)),
+  new SlashCommandBuilder().setName('earthquake-setup').setDescription('【管理者】地震速報を簡単設定')
+    .addChannelOption(o=>o.setName('channel').setDescription('投稿先').setRequired(true).addChannelTypes(ChannelType.GuildText))
+    .addStringOption(o=>o.setName('area').setDescription('全国または対象地方').setRequired(true).addChoices(
+      {name:'全国',value:'全国'},{name:'北海道地方',value:'北海道地方'},{name:'東北地方',value:'東北地方'},{name:'関東地方',value:'関東地方'},{name:'中部地方',value:'中部地方'},{name:'近畿地方',value:'近畿地方'},{name:'中国地方',value:'中国地方'},{name:'四国地方',value:'四国地方'},{name:'九州地方',value:'九州地方'},{name:'沖縄県',value:'沖縄県'}))
+    .addIntegerOption(o=>o.setName('min_intensity').setDescription('最低震度').setMinValue(1).setMaxValue(7)),
 
   new SlashCommandBuilder().setName('ticket-panel').setDescription('チケット作成パネル'),
   new SlashCommandBuilder().setName('ticket-settings').setDescription('チケットカテゴリ・サポートロール設定')

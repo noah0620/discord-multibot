@@ -15,6 +15,9 @@ import Parser from 'rss-parser';
 assertConfig();
 const store = loadStore();
 const players = new Map();
+const pendingRoleCreates = new Map();
+process.on('unhandledRejection',e=>console.error('⚠️ unhandledRejection (BOT継続):',e));
+process.on('uncaughtException',e=>console.error('⚠️ uncaughtException (BOT継続):',e));
 
 // 管理者・ショップ・URL・音声の共通ヘルパー
 const ADMIN_COMMANDS=new Set([
@@ -27,7 +30,7 @@ const ADMIN_COMMANDS=new Set([
   'earthquake-register','earthquake-list','earthquake-auto',
   'schedule-post','schedule-list','schedule-cancel',
   'moderation-rule','moderation-list','moderation-remove',
-  'role-panel','role-add','role-list','role-remove'
+  'role-panel','role-add','role-list','role-remove','role-create','role-delete','weather-setup','earthquake-setup'
 ]);
 
 function isGuildOwner(interaction){
@@ -108,7 +111,7 @@ const rssParser=new Parser({timeout:15000,headers:{'User-Agent':'NoahXJP-Discord
 const P2PQUAKE_HISTORY_URL='https://api.p2pquake.net/v2/history?codes=551&limit=10';
 
 async function fetchLatestEarthquake(){
-  const res=await fetch(P2PQUAKE_HISTORY_URL,{headers:{'User-Agent':'NoahXJP-DiscordBot/5.14.2'}});
+  const res=await fetch(P2PQUAKE_HISTORY_URL,{headers:{'User-Agent':'NoahXJP-DiscordBot/5.14.2'},signal:AbortSignal.timeout(12000)});
   if(!res.ok)throw new Error(`P2PQuake HTTP ${res.status}`);
   const data=await res.json();
   return Array.isArray(data)?(data[0]||null):null;
@@ -602,6 +605,7 @@ AI生成機能は搭載していません。`
           managerRoleId:interaction.options.getRole('manager_role')?.id || null,
           orderChannelId:interaction.options.getChannel('order_channel')?.id || interaction.channelId,
           salesChannelId:interaction.options.getChannel('sales_channel')?.id || null,
+          historyChannelId:interaction.options.getChannel('history_channel')?.id || interaction.options.getChannel('order_channel')?.id || interaction.channelId,
           active:true,
           products:[]
         };
@@ -633,12 +637,14 @@ AI生成機能は搭載していません。`
         const role=interaction.options.getRole('manager_role');
         const ch=interaction.options.getChannel('order_channel');
         const salesCh=interaction.options.getChannel('sales_channel');
-        if(!name&&!role&&!ch&&!salesCh)return interaction.reply({content:'❌ 変更する項目を1つ以上指定してください。',ephemeral:true});
+        const historyCh=interaction.options.getChannel('history_channel');
+        if(!name&&!role&&!ch&&!salesCh&&!historyCh)return interaction.reply({content:'❌ 変更する項目を1つ以上指定してください。',ephemeral:true});
 
         if(name)shop.name=name.trim();
         if(role)shop.managerRoleId=role.id;
         if(ch)shop.orderChannelId=ch.id;
         if(salesCh)shop.salesChannelId=salesCh.id;
+        if(historyCh)shop.historyChannelId=historyCh.id;
         saveStore(store);
         return interaction.reply({content:'✅ 自販機設定を更新しました。',ephemeral:true});
       }
@@ -844,6 +850,8 @@ AI生成機能は搭載していません。`
         }
 
         const g=guildData(store,interaction.guildId);
+        const applicationName=interaction.options.getString('name',true).slice(0,80);
+        const applicationDescription=(interaction.options.getString('description')||'管理者が内容を確認して承認します。').slice(0,1000);
         const approvalChannel=interaction.options.getChannel('approval_channel',true);
         g.verificationRoleId=role.id;
         g.verificationReviewChannelId=approvalChannel.id;
@@ -852,8 +860,8 @@ AI生成機能は搭載していません。`
         return interaction.reply({
           embeds:[
             new EmbedBuilder()
-              .setTitle('✅ 認証申請')
-              .setDescription('下の **認証を申請する** ボタンを押してください。\n\n管理者が申請内容を確認して承認すると、認証ロールが付与されます。')
+              .setTitle(`✅ ${applicationName}`)
+              .setDescription(`${applicationDescription}\n\n下の **申請する** ボタンを押してください。`)
               .addFields(
                 {name:'承認後のロール',value:`<@&${role.id}>`},
                 {name:'申請通知先',value:`<#${approvalChannel.id}>`}
@@ -862,8 +870,8 @@ AI生成機能は搭載していません。`
           components:[
             new ActionRowBuilder().addComponents(
               new ButtonBuilder()
-                .setCustomId('verify')
-                .setLabel('認証を申請する')
+                .setCustomId(`verify:${role.id}:${approvalChannel.id}`)
+                .setLabel(`${applicationName}を申請`.slice(0,80))
                 .setEmoji('✅')
                 .setStyle(ButtonStyle.Primary)
             )
@@ -980,6 +988,36 @@ AI生成機能は搭載していません。`
           content:`🔒 **入退室通知設定**\n参加通知: ${g.joinLogChannelId?`<#${g.joinLogChannelId}>`:'未設定'}\n退出通知: ${g.leaveLogChannelId?`<#${g.leaveLogChannelId}>`:'未設定'}\nSERVER MEMBERS INTENT: Discord Developer Portal側でON必須`,
           ephemeral:true
         });
+      }
+
+      if (n === 'role-create') {
+        const name=interaction.options.getString('name',true).trim().slice(0,100);
+        const permission=interaction.options.getString('permission')||'none';
+        const perms={none:0n,member:PermissionFlagsBits.ViewChannel|PermissionFlagsBits.SendMessages|PermissionFlagsBits.ReadMessageHistory,moderator:PermissionFlagsBits.ManageMessages|PermissionFlagsBits.ModerateMembers|PermissionFlagsBits.KickMembers,administrator:PermissionFlagsBits.Administrator};
+        pendingRoleCreates.set(`${interaction.guildId}:${interaction.user.id}`,{name,permissions:perms[permission]??0n,mentionable:interaction.options.getBoolean('mentionable')??false,hoist:interaction.options.getBoolean('hoist')??false,at:Date.now()});
+        const colors=[['赤','#ED4245'],['橙','#E67E22'],['黄','#F1C40F'],['緑','#57F287'],['青','#3498DB'],['紫','#9B59B6'],['桃','#EB459E'],['水色','#1ABC9C'],['白','#FFFFFF'],['灰','#95A5A6'],['黒','#23272A']];
+        const menu=new StringSelectMenuBuilder().setCustomId('rolecolor').setPlaceholder('ロールカラーを選択').addOptions(colors.map(([label,value])=>({label,value,description:value})));
+        return interaction.reply({content:`🎨 **${name}** の色を選択してください。`,components:[new ActionRowBuilder().addComponents(menu)],ephemeral:true});
+      }
+      if (n === 'role-delete') {
+        const role=interaction.options.getRole('role',true);
+        const problem=rolePanelProblem(interaction.guild,role);
+        if(problem)return interaction.reply({content:`❌ ${problem}`,ephemeral:true});
+        await role.delete(`管理者 ${interaction.user.tag} が /role-delete を実行`);
+        const g=guildData(store,interaction.guildId); for(const cfg of Object.values(g.rolePanels||{}))cfg.roleOptions=(cfg.roleOptions||[]).filter(x=>x.roleId!==role.id); saveStore(store);
+        return interaction.reply({content:`✅ ロール **${role.name}** を削除しました。`,ephemeral:true});
+      }
+      if (n === 'weather-setup') {
+        const g=guildData(store,interaction.guildId),area=interaction.options.getString('area',true),ch=interaction.options.getChannel('channel',true),time=interaction.options.getString('time',true);
+        if(!/^([01]\d|2[0-3]):[0-5]\d$/.test(time))return interaction.reply({content:'❌ 時刻は HH:MM 形式です。例: 07:00',ephemeral:true});
+        const regions=area==='全国'?PREFECTURES.map(x=>x[0]):expandWeatherRegion(area);
+        g.weatherRegions=[...new Set(regions)]; g.weatherChannelId=ch.id; g.weatherAutoTime=time; g.weatherAutoEnabled=true; g.lastWeatherPostDate=null; saveStore(store);
+        return interaction.reply({content:`✅ 天気自動投稿を設定しました。\n対象: **${area}（${regions.length}都道府県）**\n投稿先: ${ch}\n時刻: **${time} JST**`,ephemeral:true});
+      }
+      if (n === 'earthquake-setup') {
+        const g=guildData(store,interaction.guildId),area=interaction.options.getString('area',true),ch=interaction.options.getChannel('channel',true),min=interaction.options.getInteger('min_intensity')||3;
+        g.earthquakeRegions=area==='全国'?[]:expandWeatherRegion(area); g.earthquakeChannelId=ch.id; g.minIntensity=min; g.earthquakeAutoEnabled=true; saveStore(store);
+        return interaction.reply({content:`✅ 地震速報を設定しました。\n対象: **${area}**\n投稿先: ${ch}\n最低震度: **${min}**`,ephemeral:true});
       }
 
       if (n === 'role-panel') {
@@ -1627,6 +1665,16 @@ ${url}`)],
     }
 
     if (interaction.isButton() && interaction.customId==='support_help') return interaction.reply({content:'🆘 サポートサーバー: https://discord.gg/KGhYc6cWmq',ephemeral:true});
+    if (interaction.isStringSelectMenu() && interaction.customId==='rolecolor') {
+      const key=`${interaction.guildId}:${interaction.user.id}`,pending=pendingRoleCreates.get(key);
+      if(!pending||Date.now()-pending.at>10*60*1000)return interaction.reply({content:'❌ 作成情報の期限が切れました。もう一度 `/role-create` を実行してください。',ephemeral:true});
+      try{
+        const role=await interaction.guild.roles.create({name:pending.name,color:interaction.values[0],permissions:pending.permissions,mentionable:pending.mentionable,hoist:pending.hoist,reason:`${interaction.user.tag} /role-create`});
+        pendingRoleCreates.delete(key);
+        return interaction.update({content:`✅ ロール ${role} を作成しました。\n色: **${interaction.values[0]}**`,components:[]});
+      }catch(e){console.error('role create',e);return interaction.update({content:`❌ ロール作成に失敗しました。BOTの「ロールの管理」権限を確認してください。\n${String(e.message||e).slice(0,500)}`,components:[]});}
+    }
+
     if (interaction.isStringSelectMenu() && interaction.customId.startsWith('rolepage:')) {
       const roleId=interaction.values[0];
       const role=await interaction.guild.roles.fetch(roleId).catch(()=>null);
@@ -1672,7 +1720,8 @@ ${url}`)],
       const [kind,a,b]=interaction.customId.split(':');
 
       if (kind === 'verify') {
-        const roleId=guildData(store,interaction.guildId).verificationRoleId;
+        const roleId=a||guildData(store,interaction.guildId).verificationRoleId;
+        const panelReviewChannelId=b||guildData(store,interaction.guildId).verificationReviewChannelId;
         if(!roleId)return interaction.reply({content:'❌ 認証ロール未設定です。',ephemeral:true});
 
         const role=await interaction.guild.roles.fetch(roleId).catch(()=>null);
@@ -1713,9 +1762,10 @@ ${url}`)],
 
         const g=guildData(store,interaction.guildId);
         let notifySent=false;
-        if(g.verificationReviewChannelId){
-          const reviewChannel=interaction.guild.channels.cache.get(g.verificationReviewChannelId)
-            || await interaction.guild.channels.fetch(g.verificationReviewChannelId).catch(()=>null);
+        const effectiveReviewChannelId=panelReviewChannelId||g.verificationReviewChannelId;
+        if(effectiveReviewChannelId){
+          const reviewChannel=interaction.guild.channels.cache.get(effectiveReviewChannelId)
+            || await interaction.guild.channels.fetch(effectiveReviewChannelId).catch(()=>null);
 
           if(reviewChannel?.isTextBased()){
             const reviewEmbed=new EmbedBuilder()
@@ -2103,6 +2153,12 @@ ${url}`)],
         content:`📩 <@${shop.ownerId}> 自動販売機「${shop.name}」に新しい注文があります。${ticketChannel?` 購入チケット: <#${ticketChannel.id}>`:''}`,
         embeds:[new EmbedBuilder().setTitle(`注文 #${id}`).setDescription(`商品: ${p.name} × ${qty}\n合計: ¥${order.total.toLocaleString()}\n購入者: <@${interaction.user.id}>`)]
       }).catch(()=>{});
+
+      const historyChannelId=shop.historyChannelId||shop.orderChannelId;
+      if(historyChannelId && historyChannelId!==shop.orderChannelId){
+        const historyCh=interaction.guild.channels.cache.get(historyChannelId)||await interaction.guild.channels.fetch(historyChannelId).catch(()=>null);
+        if(historyCh?.isTextBased())await historyCh.send({embeds:[new EmbedBuilder().setTitle(`🧾 購入履歴 #${id}`).addFields({name:'購入者',value:`<@${interaction.user.id}> / ${interaction.user.username} / ID: ${interaction.user.id}`},{name:'商品',value:`${p.name} × ${qty}`},{name:'合計',value:`¥${order.total.toLocaleString()}`},{name:'日時',value:new Date().toLocaleString('ja-JP',{timeZone:'Asia/Tokyo'})})]}).catch(()=>{});
+      }
 
       const seller=await client.users.fetch(shop.ownerId).catch(()=>null);
       await seller?.send(`📩 自動販売機「${shop.name}」で商品が購入されました。\n注文 #${id}\n購入者: ${interaction.user.username} / <@${interaction.user.id}> / ID: ${interaction.user.id}\n商品: ${p.name} × ${qty}\n合計: ¥${order.total.toLocaleString()}${ticketChannel?`\n購入チケット: https://discord.com/channels/${interaction.guildId}/${ticketChannel.id}`:''}`).catch(()=>{});
