@@ -76,7 +76,9 @@ export function guildData(store, guildId) {
     weatherAutoEnabled: false,
     weatherAutoTime: '07:00',
     earthquakeAutoEnabled: false,
-    lastWeatherPostDate: null
+    lastWeatherPostDate: null,
+    weatherSetupUpdatedAt: null,
+    earthquakeSetupUpdatedAt: null
   };
   const g = store.guilds[guildId];
   g.joinTitle ??= '📥 メンバー参加';
@@ -97,6 +99,8 @@ export function guildData(store, guildId) {
   g.weatherRegions ??= [];
   g.weatherChannelRoutes ??= {};
   g.earthquakeRegions ??= [];
+  g.weatherSetupUpdatedAt ??= null;
+  g.earthquakeSetupUpdatedAt ??= null;
   g.autoReplies ??= {};
   g.adminRoleId ??= null;
   g.adminRoleIds ??= [];

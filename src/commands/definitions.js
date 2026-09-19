@@ -130,14 +130,16 @@ export const commandData = [
     .addRoleOption(o=>o.setName('role').setDescription('削除するロール').setRequired(true)),
   new SlashCommandBuilder().setName('weather-setup').setDescription('【管理者】天気自動投稿を簡単設定')
     .addStringOption(o=>o.setName('area').setDescription('全国または地方').setRequired(true).addChoices(
-      {name:'全国47都道府県',value:'全国'},{name:'北海道地方',value:'北海道地方'},{name:'東北地方',value:'東北地方'},{name:'関東地方',value:'関東地方'},{name:'中部地方',value:'中部地方'},{name:'近畿地方',value:'近畿地方'},{name:'中国地方',value:'中国地方'},{name:'四国地方',value:'四国地方'},{name:'九州地方',value:'九州地方'},{name:'沖縄県',value:'沖縄県'}))
+      {name:'全国47都道府県',value:'全国'},{name:'北海道地方',value:'北海道地方'},{name:'東北地方',value:'東北地方'},{name:'関東地方',value:'関東地方'},{name:'中部地方',value:'中部地方'},{name:'近畿地方',value:'近畿地方'},{name:'中国地方',value:'中国地方'},{name:'四国地方',value:'四国地方'},{name:'九州地方',value:'九州地方'},{name:'九州・沖縄地方',value:'九州・沖縄地方'},{name:'沖縄地方',value:'沖縄地方'}))
     .addChannelOption(o=>o.setName('channel').setDescription('投稿先').setRequired(true).addChannelTypes(ChannelType.GuildText))
-    .addStringOption(o=>o.setName('time').setDescription('JST HH:MM').setRequired(true)),
+    .addStringOption(o=>o.setName('time').setDescription('JST HH:MM').setRequired(true))
+    .addBooleanOption(o=>o.setName('enabled').setDescription('自動配信・自動更新をON/OFF（省略時ON）')),
   new SlashCommandBuilder().setName('earthquake-setup').setDescription('【管理者】地震速報を簡単設定')
     .addChannelOption(o=>o.setName('channel').setDescription('投稿先').setRequired(true).addChannelTypes(ChannelType.GuildText))
     .addStringOption(o=>o.setName('area').setDescription('全国または対象地方').setRequired(true).addChoices(
-      {name:'全国',value:'全国'},{name:'北海道地方',value:'北海道地方'},{name:'東北地方',value:'東北地方'},{name:'関東地方',value:'関東地方'},{name:'中部地方',value:'中部地方'},{name:'近畿地方',value:'近畿地方'},{name:'中国地方',value:'中国地方'},{name:'四国地方',value:'四国地方'},{name:'九州地方',value:'九州地方'},{name:'沖縄県',value:'沖縄県'}))
-    .addIntegerOption(o=>o.setName('min_intensity').setDescription('最低震度').setMinValue(1).setMaxValue(7)),
+      {name:'全国',value:'全国'},{name:'北海道地方',value:'北海道地方'},{name:'東北地方',value:'東北地方'},{name:'関東地方',value:'関東地方'},{name:'中部地方',value:'中部地方'},{name:'近畿地方',value:'近畿地方'},{name:'中国地方',value:'中国地方'},{name:'四国地方',value:'四国地方'},{name:'九州地方',value:'九州地方'},{name:'九州・沖縄地方',value:'九州・沖縄地方'},{name:'沖縄地方',value:'沖縄地方'}))
+    .addIntegerOption(o=>o.setName('min_intensity').setDescription('最低震度').setMinValue(1).setMaxValue(7))
+    .addBooleanOption(o=>o.setName('enabled').setDescription('自動配信・自動更新をON/OFF（省略時ON）')),
 
   new SlashCommandBuilder().setName('ticket-panel').setDescription('チケット作成パネル'),
   new SlashCommandBuilder().setName('ticket-settings').setDescription('チケットカテゴリ・サポートロール設定')

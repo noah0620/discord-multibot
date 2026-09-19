@@ -260,16 +260,21 @@ async function fetchWeatherPrefecture(pref){
 }
 
 async function buildWeatherPages(regions){
-  const blocks=[];
-  for(const pref of [...new Set(regions||[])]){
-    try{
-      const w=await fetchWeatherPrefecture(pref);
-      const rainExpected=Number(w.rain||0)>0 || Number(w.prob||0)>=40;
-      blocks.push(`${w.icon} **${w.pref}（${w.capital}）** — ${w.label}\n最低 ${w.min??'-'}℃ / 最高 ${w.max??'-'}℃\n降水量 ${w.rain??'-'}mm / 降水確率 ${w.prob??'-'}%${rainExpected?'\n☔ 雨具があると安心です。':''}`);
-    }catch(e){
-      console.error(`weather fetch ${pref}`,e);
-      blocks.push(`⚠️ **${pref}** — 天気情報を取得できませんでした。`);
-    }
+  const prefs=[...new Set(regions||[])],blocks=[];
+  // 全国47件でも1件ずつ待たない。API負荷を抑えつつ6件ずつ並列取得する。
+  for(let i=0;i<prefs.length;i+=6){
+    const batch=prefs.slice(i,i+6);
+    const results=await Promise.allSettled(batch.map(pref=>fetchWeatherPrefecture(pref)));
+    results.forEach((result,j)=>{
+      const pref=batch[j];
+      if(result.status==='fulfilled'){
+        const w=result.value,rainExpected=Number(w.rain||0)>0 || Number(w.prob||0)>=40;
+        blocks.push(`${w.icon} **${w.pref}（${w.capital}）** — ${w.label}\n最低 ${w.min??'-'}℃ / 最高 ${w.max??'-'}℃\n降水量 ${w.rain??'-'}mm / 降水確率 ${w.prob??'-'}%${rainExpected?'\n☔ 雨具があると安心です。':''}`);
+      }else{
+        console.error(`weather fetch ${pref}`,result.reason);
+        blocks.push(`⚠️ **${pref}** — 天気情報を取得できませんでした。`);
+      }
+    });
   }
   return splitDiscordBlocks(`🌤️ **天気予報**\n代表地点: 各都道府県の県庁所在地付近`,blocks,1900);
 }
@@ -1022,15 +1027,22 @@ AI生成機能は搭載していません。`
       }
       if (n === 'weather-setup') {
         const g=guildData(store,interaction.guildId),area=interaction.options.getString('area',true),ch=interaction.options.getChannel('channel',true),time=interaction.options.getString('time',true);
+        const enabled=interaction.options.getBoolean('enabled') ?? true;
         if(!/^([01]\d|2[0-3]):[0-5]\d$/.test(time))return interaction.reply({content:'❌ 時刻は HH:MM 形式です。例: 07:00',ephemeral:true});
         const regions=area==='全国'?PREFECTURES.map(x=>x[0]):expandWeatherRegion(area);
-        g.weatherRegions=[...new Set(regions)]; g.weatherChannelId=ch.id; g.weatherAutoTime=time; g.weatherAutoEnabled=true; g.lastWeatherPostDate=null; saveStore(store);
-        return interaction.reply({content:`✅ 天気自動投稿を設定しました。\n対象: **${area}（${regions.length}都道府県）**\n投稿先: ${ch}\n時刻: **${time} JST**`,ephemeral:true});
+        if(!regions.length)return interaction.reply({content:`❌ 対象地域「${area}」を展開できませんでした。`,ephemeral:true});
+        g.weatherRegions=[...new Set(regions)]; g.weatherChannelId=ch.id; g.weatherAutoTime=time; g.weatherAutoEnabled=enabled; g.lastWeatherPostDate=null;
+        g.weatherSetupUpdatedAt=new Date().toISOString(); saveStore(store);
+        return interaction.reply({content:`✅ **天気の自動配信・自動更新をまとめて設定しました。**\n対象: **${area}（${regions.length}都道府県）**\n投稿先: ${ch}\n毎日: **${time} JST**\n自動配信・更新: **${enabled?'ON':'OFF'}**\n※設定変更はBOT再起動なしで監視処理へ反映されます。`,ephemeral:true});
       }
       if (n === 'earthquake-setup') {
         const g=guildData(store,interaction.guildId),area=interaction.options.getString('area',true),ch=interaction.options.getChannel('channel',true),min=interaction.options.getInteger('min_intensity')||3;
-        g.earthquakeRegions=area==='全国'?[]:expandWeatherRegion(area); g.earthquakeChannelId=ch.id; g.minIntensity=min; g.earthquakeAutoEnabled=true; saveStore(store);
-        return interaction.reply({content:`✅ 地震速報を設定しました。\n対象: **${area}**\n投稿先: ${ch}\n最低震度: **${min}**`,ephemeral:true});
+        const enabled=interaction.options.getBoolean('enabled') ?? true;
+        const regions=area==='全国'?[]:expandWeatherRegion(area);
+        if(area!=='全国' && !regions.length)return interaction.reply({content:`❌ 対象地域「${area}」を展開できませんでした。`,ephemeral:true});
+        g.earthquakeRegions=regions; g.earthquakeChannelId=ch.id; g.minIntensity=min; g.earthquakeAutoEnabled=enabled;
+        g.earthquakeSetupUpdatedAt=new Date().toISOString(); saveStore(store);
+        return interaction.reply({content:`✅ **地震速報の自動配信・自動更新をまとめて設定しました。**\n対象: **${area}${regions.length?`（${regions.length}都道府県）`:''}**\n投稿先: ${ch}\n最低震度: **${min}**\n自動配信・更新: **${enabled?'ON':'OFF'}**\n※新着地震を継続監視し、同一イベントの重複配信を防止します。`,ephemeral:true});
       }
 
       if (n === 'role-panel') {
@@ -2360,7 +2372,7 @@ async function runWeatherWatcher(){
           const ch=await guild.channels.fetch(job.channelId).catch(()=>null);
           if(!ch?.isTextBased())continue;
           const pages=await buildWeatherPages(job.regions);
-          for(const page of pages)await ch.send(page);
+          for(const page of pages)await ch.send(page).catch(e=>{throw new Error(`Discord投稿失敗: ${e.message||e}`)});
           job.lastSent=dateKey;saveStore(store);
           console.log(`🌤️ 天気追加設定 #${job.id} 投稿成功`);
         }catch(error){console.error(`❌ 天気追加設定 #${job.id}`,error);}
@@ -2385,7 +2397,7 @@ async function runWeatherWatcher(){
         const ch=guild.channels.cache.get(channelId)||await guild.channels.fetch(channelId).catch(()=>null);
         if(!ch?.isTextBased()){console.warn(`⚠️ 天気自動投稿 ${guild.id}: channel ${channelId} 取得不可`);continue;}
         const pages=await buildWeatherPages(regions);
-        for(const page of pages)await ch.send(page);
+        for(const page of pages)await ch.send(page).catch(e=>{throw new Error(`Discord投稿失敗: ${e.message||e}`)});
         sentAny=true;
         console.log(`🌤️ 天気予報を自動投稿: ${guild.name} / ${ch.name} / ${regions.length}地域`);
       }
@@ -2399,10 +2411,17 @@ client.once(Events.ClientReady,async readyClient=>{
   console.log(`✅ Discordログイン完了: ${readyClient.user.tag} / ${readyClient.user.id}`);
   console.log(`🌤️ 天気自動投稿監視: 15秒間隔 / JST`);
   console.log(`🌏 地震速報監視: 約${config.earthquakePollSeconds}秒間隔`);
-  await runEarthquakeWatcher();
-  await runWeatherWatcher();
-  setInterval(runEarthquakeWatcher,config.earthquakePollSeconds*1000);
-  setInterval(runWeatherWatcher,15*1000);
+  // setIntervalの重なりを避ける自己復帰型スケジューラ。
+  // 1回失敗しても次回監視を必ず予約するため、更新系が止まりにくい。
+  const scheduleLoop=(name,fn,delay)=>{
+    const tick=async()=>{
+      try{await fn();}catch(e){console.error(`❌ ${name} loop`,e);}
+      finally{setTimeout(tick,delay);}
+    };
+    tick();
+  };
+  scheduleLoop('earthquake',runEarthquakeWatcher,Math.max(5000,config.earthquakePollSeconds*1000));
+  scheduleLoop('weather',runWeatherWatcher,15000);
 });
 
 
