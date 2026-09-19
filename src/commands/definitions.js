@@ -94,6 +94,10 @@ export const commandData = [
     .addChannelOption(o=>o.setName('join').setDescription('参加通知チャンネル').addChannelTypes(ChannelType.GuildText))
     .addChannelOption(o=>o.setName('leave').setDescription('退出通知チャンネル').addChannelTypes(ChannelType.GuildText)),
   new SlashCommandBuilder().setName('join-leave-status').setDescription('【管理者】入退室通知設定を確認'),
+  new SlashCommandBuilder().setName('welcome-settings').setDescription('【管理者】参加通知タイトル・認証案内を設定')
+    .addStringOption(o=>o.setName('title').setDescription('参加通知のタイトル（例: ようこそ！）'))
+    .addChannelOption(o=>o.setName('verification_channel').setDescription('新規参加者へ案内する認証パネルチャンネル').addChannelTypes(ChannelType.GuildText)),
+  new SlashCommandBuilder().setName('welcome-status').setDescription('【管理者】参加通知・認証案内設定を確認'),
 
   new SlashCommandBuilder().setName('role-panel').setDescription('【管理者】このチャンネル専用のボタン式ロールパネルを設置')
     .addStringOption(o=>o.setName('title').setDescription('パネルタイトル').setRequired(false))
@@ -142,6 +146,18 @@ export const commandData = [
     ))
     .addStringOption(o=>o.setName('value').setDescription('Discord ID').setRequired(true)),
 
+  new SlashCommandBuilder().setName('latest-add').setDescription('【管理者】URLを貼るだけで最新情報の自動取得を登録')
+    .addStringOption(o=>o.setName('url').setDescription('プロフィールURLまたはRSS/Atom URL').setRequired(true))
+    .addChannelOption(o=>o.setName('channel').setDescription('新着の投稿先').setRequired(true).addChannelTypes(ChannelType.GuildText)),
+  new SlashCommandBuilder().setName('media-add').setDescription('【管理者】検索用の画像・動画URLを登録')
+    .addStringOption(o=>o.setName('name').setDescription('名前').setRequired(true))
+    .addStringOption(o=>o.setName('url').setDescription('画像・動画URL').setRequired(true))
+    .addStringOption(o=>o.setName('tags').setDescription('タグ（空白またはカンマ区切り）'))
+    .addStringOption(o=>o.setName('type').setDescription('種類').addChoices({name:'画像',value:'image'},{name:'動画',value:'video'})),
+  new SlashCommandBuilder().setName('media-search').setDescription('登録済み画像・動画を検索')
+    .addStringOption(o=>o.setName('keyword').setDescription('名前・タグで検索').setRequired(true)),
+  new SlashCommandBuilder().setName('media-remove').setDescription('【管理者】検索用メディアを削除')
+    .addIntegerOption(o=>o.setName('id').setDescription('メディアID').setRequired(true)),
   new SlashCommandBuilder().setName('social-source-add').setDescription('【管理者】プロフィールURLからSNSを自動判定して最新情報を取得')
     .addStringOption(o=>o.setName('profile_url').setDescription('X / YouTube / Instagram のプロフィールURL').setRequired(true))
     .addStringOption(o=>o.setName('channel_url').setDescription('Discord投稿先チャンネルURL').setRequired(true)),

@@ -19,9 +19,9 @@ const players = new Map();
 // 管理者・ショップ・URL・音声の共通ヘルパー
 const ADMIN_COMMANDS=new Set([
   'shop-admin','verify-panel','verify-admin','verify-status','verify-settings',
-  'join-leave-settings','join-leave-status','ticket-panel','ticket-settings','ticket-status',
+  'join-leave-settings','join-leave-status','welcome-settings','welcome-status','ticket-panel','ticket-settings','ticket-status',
   'autoreply-add','autoreply-remove','autoreply-list','guild-settings','guild-status','setting',
-  'social-source-add','social-source-remove','social-list','social-test',
+  'social-source-add','social-source-remove','social-list','social-test','latest-add','media-add','media-remove',
   'news-source-add','news-source-remove','news-list','news-auto','news-test',
   'weather-auto-add','weather-auto-list','weather-auto-remove','weather-register','weather-admin','weather-channel','weather-channel-remove','weather-list','weather-auto',
   'earthquake-register','earthquake-list','earthquake-auto',
@@ -359,8 +359,8 @@ client.on(Events.GuildMemberAdd, async member => {
   if (!ch?.isTextBased()) return;
 
   const embed = new EmbedBuilder()
-    .setTitle('📥 メンバー参加')
-    .setDescription(`${member} がサーバーに参加しました。`)
+    .setTitle((g.joinTitle||'📥 メンバー参加').slice(0,256))
+    .setDescription(`${member} がサーバーに参加しました。${g.verificationPanelChannelId?`\n\n🔐 **認証はこちら:** <#${g.verificationPanelChannelId}>`:''}`)
     .addFields(
       {name:'ユーザー', value:`${member.user.tag}`, inline:true},
       {name:'メンバー数', value:String(member.guild.memberCount), inline:true}
@@ -959,6 +959,21 @@ AI生成機能は搭載していません。`
         });
       }
 
+      if (n === 'welcome-settings') {
+        const g=guildData(store,interaction.guildId);
+        const title=interaction.options.getString('title');
+        const verification=interaction.options.getChannel('verification_channel');
+        if(!title&&!verification)return interaction.reply({content:'❌ `title` または `verification_channel` を指定してください。',ephemeral:true});
+        if(title)g.joinTitle=title.slice(0,256);
+        if(verification)g.verificationPanelChannelId=verification.id;
+        saveStore(store);
+        return interaction.reply({content:`✅ 参加案内を更新しました。\nタイトル: **${g.joinTitle}**\n認証パネル: ${g.verificationPanelChannelId?`<#${g.verificationPanelChannelId}>`:'未設定'}`,ephemeral:true});
+      }
+      if (n === 'welcome-status') {
+        const g=guildData(store,interaction.guildId);
+        return interaction.reply({content:`👋 **参加案内設定**\nタイトル: **${g.joinTitle||'📥 メンバー参加'}**\n参加通知先: ${g.joinLogChannelId?`<#${g.joinLogChannelId}>`:'未設定'}\n認証パネル: ${g.verificationPanelChannelId?`<#${g.verificationPanelChannelId}>`:'未設定'}`,ephemeral:true});
+      }
+
       if (n === 'join-leave-status') {
         const g=guildData(store,interaction.guildId);
         return interaction.reply({
@@ -1115,6 +1130,37 @@ AI生成機能は搭載していません。`
         g[map[key]]=value;
         saveStore(store);
         return interaction.reply({content:'✅ 旧版互換設定を保存しました。',ephemeral:true});
+      }
+
+      if (n === 'media-add') {
+        const g=guildData(store,interaction.guildId), url=interaction.options.getString('url',true);
+        if(!validHttpUrl(url))return interaction.reply({content:'❌ http/https URLを指定してください。',ephemeral:true});
+        const item={id:g.nextMediaId++,name:interaction.options.getString('name',true).slice(0,100),url,tags:(interaction.options.getString('tags')||'').split(/[\s,、]+/).filter(Boolean).slice(0,30),type:interaction.options.getString('type')||'image',addedBy:interaction.user.id,createdAt:new Date().toISOString()};
+        g.mediaLibrary.push(item); saveStore(store);
+        return interaction.reply({content:`✅ メディア #${item.id} **${item.name}** を登録しました。`,ephemeral:true});
+      }
+      if (n === 'media-search') {
+        const g=guildData(store,interaction.guildId), q=interaction.options.getString('keyword',true).toLowerCase();
+        const found=(g.mediaLibrary||[]).filter(x=>`${x.name} ${(x.tags||[]).join(' ')}`.toLowerCase().includes(q)).slice(0,10);
+        if(!found.length)return interaction.reply({content:'🔎 該当する画像・動画はありません。',ephemeral:true});
+        return interaction.reply({content:found.map(x=>`**#${x.id} ${x.type==='video'?'🎬':'🖼️'} ${x.name}**\n${x.url}\nタグ: ${(x.tags||[]).join(', ')||'なし'}`).join('\n\n')});
+      }
+      if (n === 'media-remove') {
+        const g=guildData(store,interaction.guildId), id=interaction.options.getInteger('id',true), before=g.mediaLibrary.length;
+        g.mediaLibrary=g.mediaLibrary.filter(x=>x.id!==id); saveStore(store);
+        return interaction.reply({content:before===g.mediaLibrary.length?'❌ メディアIDが見つかりません。':`✅ メディア #${id} を削除しました。`,ephemeral:true});
+      }
+      if (n === 'latest-add') {
+        const g=guildData(store,interaction.guildId), input=interaction.options.getString('url',true), channel=interaction.options.getChannel('channel',true);
+        let resolved,name='最新情報';
+        const platform=detectSocialPlatform(input);
+        try{
+          if(platform){ resolved=await resolveSocialFeedAuto(platform,input); name=`${platform} ${socialUsername(platform,input)||''}`.trim(); }
+          else { await rssParser.parseURL(input); resolved={feedUrl:input,method:'RSS/Atom'}; name=new URL(input).hostname; }
+        }catch(e){return interaction.reply({content:`❌ URLから取得方式を判定できませんでした。\n${String(e.message||e).slice(0,800)}`,ephemeral:true});}
+        const id=g.nextSocialSourceId++;
+        g.socialSources.push({id,name,profileUrl:input,feedUrl:resolved.feedUrl,channelId:channel.id,method:resolved.method,active:true}); saveStore(store);
+        return interaction.reply({content:`✅ 最新情報 #${id} を登録しました。\n取得方式: **${resolved.method}**\n投稿先: ${channel}`,ephemeral:true});
       }
 
       if (n === 'social-source-add') {
@@ -2059,7 +2105,7 @@ ${url}`)],
       }).catch(()=>{});
 
       const seller=await client.users.fetch(shop.ownerId).catch(()=>null);
-      await seller?.send(`📩 自動販売機「${shop.name}」で商品が購入されました。\n注文 #${id}\n商品: ${p.name} × ${qty}\n合計: ¥${order.total.toLocaleString()}${ticketChannel?`\n購入チケット: https://discord.com/channels/${interaction.guildId}/${ticketChannel.id}`:''}`).catch(()=>{});
+      await seller?.send(`📩 自動販売機「${shop.name}」で商品が購入されました。\n注文 #${id}\n購入者: ${interaction.user.username} / <@${interaction.user.id}> / ID: ${interaction.user.id}\n商品: ${p.name} × ${qty}\n合計: ¥${order.total.toLocaleString()}${ticketChannel?`\n購入チケット: https://discord.com/channels/${interaction.guildId}/${ticketChannel.id}`:''}`).catch(()=>{});
 
       return interaction.reply({content:`✅ 注文 #${id} を送信しました。合計 ¥${order.total.toLocaleString()} です。${ticketChannel?`\n販売者との専用チケット: <#${ticketChannel.id}>`:'\n⚠️ 専用チケット作成に失敗したため、販売者へ通知しました。'}`,ephemeral:true});
     }

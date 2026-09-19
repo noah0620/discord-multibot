@@ -45,6 +45,10 @@ export function saveStore(store) {
 export function guildData(store, guildId) {
   store.guilds[guildId] ??= {
     joinLogChannelId: null,
+    joinTitle: '📥 メンバー参加',
+    verificationPanelChannelId: null,
+    mediaLibrary: [],
+    nextMediaId: 1,
     leaveLogChannelId: null,
     adminRoleId: null,
     verificationRoleId: null,
@@ -73,6 +77,10 @@ export function guildData(store, guildId) {
     lastWeatherPostDate: null
   };
   const g = store.guilds[guildId];
+  g.joinTitle ??= '📥 メンバー参加';
+  g.verificationPanelChannelId ??= null;
+  g.mediaLibrary ??= [];
+  g.nextMediaId ??= 1;
   g.weatherAutoTime ??= '07:00';
   g.weatherAutoEnabled ??= false;
   g.earthquakeAutoEnabled ??= false;
