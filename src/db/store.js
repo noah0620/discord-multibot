@@ -51,6 +51,7 @@ export function guildData(store, guildId) {
     nextMediaId: 1,
     leaveLogChannelId: null,
     adminRoleId: null,
+    adminRoleIds: [],
     verificationRoleId: null,
     verificationReviewChannelId: null,
     ticketCategoryId: null,
@@ -98,6 +99,9 @@ export function guildData(store, guildId) {
   g.earthquakeRegions ??= [];
   g.autoReplies ??= {};
   g.adminRoleId ??= null;
+  g.adminRoleIds ??= [];
+  // 旧版の単一管理者ロール設定を自動移行
+  if (g.adminRoleId && !g.adminRoleIds.includes(g.adminRoleId)) g.adminRoleIds.push(g.adminRoleId);
   g.verificationReviewChannelId ??= null;
   g.ticketCategoryId ??= null;
   g.ticketSupportRoleId ??= null;

@@ -12,8 +12,10 @@ export const commandData = [
     .addIntegerOption(o=>o.setName('id').setDescription('設定ID').setRequired(true)),
   new SlashCommandBuilder().setName('ping').setDescription('BOT応答確認'),
   new SlashCommandBuilder().setName('owner-status').setDescription('BOTオーナー判定を確認'),
-  new SlashCommandBuilder().setName('admin-role-set').setDescription('【鯖主】管理者コマンドを使えるロールを設定')
-    .addRoleOption(o=>o.setName('role').setDescription('管理者ロール').setRequired(true)),
+  new SlashCommandBuilder().setName('admin-role-set').setDescription('【管理】管理者ロールを追加（複数設定可）')
+    .addRoleOption(o=>o.setName('role').setDescription('追加する管理者ロール').setRequired(true)),
+  new SlashCommandBuilder().setName('admin-role-remove').setDescription('【管理】管理者ロールを解除')
+    .addRoleOption(o=>o.setName('role').setDescription('解除する管理者ロール').setRequired(true)),
   new SlashCommandBuilder().setName('admin-role-status').setDescription('管理者ロール設定を確認'),
   new SlashCommandBuilder().setName('diagnostics').setDescription('【管理者】BOT権限・設定の動作診断'),
 
