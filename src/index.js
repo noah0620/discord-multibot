@@ -1160,7 +1160,14 @@ AI生成機能は搭載していません。`
         if(!category&&!support&&!logChannel)return interaction.reply({content:'❌ カテゴリ・サポートロール・ログチャンネルのいずれかを指定してください。',ephemeral:true});
         if(category)g.ticketCategoryId=category.id;
         if(support)g.ticketSupportRoleId=support.id;
-        if(logChannel)g.ticketLogChannelId=logChannel.id;
+        if(logChannel){
+          const me=interaction.guild.members.me || await interaction.guild.members.fetchMe();
+          const permissions=logChannel.permissionsFor(me);
+          if(!permissions?.has([PermissionFlagsBits.ViewChannel,PermissionFlagsBits.SendMessages,PermissionFlagsBits.EmbedLinks])){
+            return interaction.reply({content:'❌ ログチャンネルでBOTに「チャンネルを見る」「メッセージを送信」「埋め込みリンク」の権限を付与してください。設定は保存していません。',ephemeral:true});
+          }
+          g.ticketLogChannelId=logChannel.id;
+        }
         saveStore(store);
         return interaction.reply({
           content:`✅ チケット設定を保存しました。\nカテゴリ: ${g.ticketCategoryId?`<#${g.ticketCategoryId}>`:'未設定'}\nサポートロール: ${g.ticketSupportRoleId?`<@&${g.ticketSupportRoleId}>`:'未設定'}\n作成ログ: ${g.ticketLogChannelId?`<#${g.ticketLogChannelId}>`:'未設定'}`,
@@ -2060,6 +2067,7 @@ ${url}`)],
       }
 
       if (kind === 'ticket' && a === 'create') {
+        await interaction.deferReply({ephemeral:true});
         const g=guildData(store,interaction.guildId);
         const overwrites=[
           {id:interaction.guild.id,deny:[PermissionFlagsBits.ViewChannel]},
@@ -2093,20 +2101,34 @@ ${url}`)],
             new ButtonBuilder().setCustomId(`ticketclose:${ticketId}`).setLabel('チケットを閉じる').setStyle(ButtonStyle.Danger)
           )]
         });
+        let logNotice='';
         if(g.ticketLogChannelId){
-          const logCh=interaction.guild.channels.cache.get(g.ticketLogChannelId) || await interaction.guild.channels.fetch(g.ticketLogChannelId).catch(()=>null);
-          if(logCh?.isTextBased()){
-            await logCh.send({embeds:[new EmbedBuilder()
-              .setTitle('🎫 チケット作成ログ')
-              .addFields(
-                {name:'チケット',value:`#${ticketId} / <#${ch.id}>`,inline:false},
-                {name:'作成者',value:`<@${interaction.user.id}> / ID: ${interaction.user.id}`,inline:false},
-                {name:'作成日時',value:`<t:${Math.floor(Date.now()/1000)}:F>`,inline:false}
-              )
-              .setTimestamp()]}).catch(e=>console.error('ticket create log',e));
+          try{
+            const logCh=await interaction.guild.channels.fetch(g.ticketLogChannelId);
+            if(!logCh?.isTextBased() || !('send' in logCh))throw new Error('ログチャンネルが存在しないか、テキスト投稿に対応していません');
+            const logMessage=await logCh.send({
+              allowedMentions:{parse:[]},
+              embeds:[new EmbedBuilder()
+                .setTitle('🎫 チケット作成ログ')
+                .addFields(
+                  {name:'チケット番号',value:`#${ticketId}`,inline:true},
+                  {name:'チケットチャンネル',value:`<#${ch.id}>`,inline:true},
+                  {name:'作成者',value:`<@${interaction.user.id}> (${interaction.user.username})`,inline:false},
+                  {name:'ユーザーID',value:interaction.user.id,inline:false},
+                  {name:'作成日時',value:`<t:${Math.floor(Date.parse(store.tickets[ticketId].createdAt)/1000)}:F>`,inline:false}
+                ).setTimestamp(new Date(store.tickets[ticketId].createdAt))]
+            });
+            store.tickets[ticketId].creationLogMessageId=logMessage.id;
+            saveStore(store);
+            console.log(`🎫 チケット作成ログ送信: #${ticketId} → ${logCh.id}`);
+          }catch(error){
+            console.error(`❌ チケット #${ticketId} 作成ログ送信失敗 (channel=${g.ticketLogChannelId})`,error);
+            logNotice='\n⚠️ チケットは作成しましたが、作成ログの送信に失敗しました。管理者にログチャンネルの設定・BOT権限を確認してもらってください。';
           }
+        }else{
+          console.warn(`⚠️ チケット作成ログ未設定: guild=${interaction.guildId}`);
         }
-        return interaction.reply({content:`✅ ${ch} を作成しました。`,ephemeral:true});
+        return interaction.editReply({content:`✅ ${ch} を作成しました。${logNotice}`});
       }
 
       if (kind === 'ticketclose') {
