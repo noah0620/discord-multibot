@@ -4,7 +4,7 @@ import {
   TextInputBuilder, TextInputStyle, ChannelType, PermissionFlagsBits, StringSelectMenuBuilder
 } from 'discord.js';
 import { joinVoiceChannel, createAudioPlayer, createAudioResource, AudioPlayerStatus, StreamType } from '@discordjs/voice';
-import { config, assertConfig, isBotOwner } from './config.js';
+import { config, assertConfig, isBotOwner, isBotOwnerUser } from './config.js';
 import { loadStore, saveStore, guildData } from './db/store.js';
 import { searchRegionChoices, searchPrefectureChoices, PREFECTURES, WEATHER_AREAS, expandWeatherRegion } from './regions.js';
 import path from 'node:path';
@@ -14,6 +14,8 @@ import Parser from 'rss-parser';
 
 assertConfig();
 const store = loadStore();
+console.log(`🔐 BOTオーナーID読込: ${config.ownerIds.length}件 / .env: ${config.envPath}`);
+console.log(`💾 データ保存先: ${config.dataDir}`);
 const players = new Map();
 const pendingRoleCreates = new Map();
 process.on('unhandledRejection',e=>console.error('⚠️ unhandledRejection (BOT継続):',e));
@@ -39,7 +41,7 @@ function isGuildOwner(interaction){
 
 function hasConfiguredAdminRole(interaction){
   if(!interaction.guild||!interaction.user)return false;
-  if(isGuildOwner(interaction)||isBotOwner(interaction.user.id))return true;
+  if(isGuildOwner(interaction)||isBotOwnerUser(interaction.user))return true;
   const g=guildData(store,interaction.guildId);
   const ids = Array.isArray(g.adminRoleIds) ? g.adminRoleIds : [];
   return ids.some(id=>interaction.member?.roles?.cache?.has(id));
@@ -48,7 +50,7 @@ function hasConfiguredAdminRole(interaction){
 function isShopManager(interaction,shop){
   if(!interaction.user||!shop)return false;
   if(interaction.user.id===shop.ownerId)return true;
-  if(isBotOwner(interaction.user.id))return true;
+  if(isBotOwnerUser(interaction.user))return true;
   if(interaction.guild?.ownerId===interaction.user.id)return true;
   if(hasConfiguredAdminRole(interaction))return true;
   return Boolean(shop.managerRoleId && interaction.member?.roles?.cache?.has(shop.managerRoleId));
@@ -539,12 +541,35 @@ AI生成機能は搭載していません。`
       }
 
       if (n === 'owner-status') {
-        return interaction.reply({ content:isBotOwner(interaction.user.id)?'✅ BOTオーナーです。':'ℹ️ BOTオーナーではありません。', ephemeral:true });
+        return interaction.reply({ content:isBotOwnerUser(interaction.user) ? `✅ BOTオーナーです。\nあなたのID: ${interaction.user.id}\nBOT_OWNER_IDS: 読み込み済み (${config.ownerIds.length}件)` : `ℹ️ BOTオーナーではありません。\nあなたのID: ${interaction.user.id}\nBOT_OWNER_IDS: ${config.ownerIds.length ? `読み込み済み (${config.ownerIds.length}件)` : '❌ 未読込（BOT本体直下の .env を確認）'}`, ephemeral:true });
+      }
+      if (n === 'bot-restart') {
+        if (!isBotOwnerUser(interaction.user)) {
+          return interaction.reply({content:'❌ BOT再起動はBOTオーナーのみ実行できます。',ephemeral:true});
+        }
+        await interaction.reply({content:`🔄 BOTを再起動します。\n実行者: ${interaction.user.username} (${interaction.user.id})`,ephemeral:true});
+        console.log(`🔄 BOT再起動要求: ${interaction.user.username} (${interaction.user.id})`);
+        setTimeout(() => {
+          try {
+            const entry = process.argv[1];
+            const child = spawn(process.execPath, [entry], {
+              cwd: process.cwd(),
+              env: process.env,
+              detached: true,
+              stdio: 'ignore'
+            });
+            child.unref();
+            process.exit(0);
+          } catch (error) {
+            console.error('❌ BOT再起動に失敗:', error);
+          }
+        }, 1200);
+        return;
       }
       if (n === 'admin-role-set') {
         const g=guildData(store,interaction.guildId);
         // 最初の1件はサーバー所有者/BOTオーナーのみ。以後は登録済み管理者も追加可能。
-        if((g.adminRoleIds||[]).length===0 && !isGuildOwner(interaction) && !isBotOwner(interaction.user.id)){
+        if((g.adminRoleIds||[]).length===0 && !isGuildOwner(interaction) && !isBotOwnerUser(interaction.user)){
           return interaction.reply({content:'❌ 最初の管理者ロール設定はサーバー所有者またはBOTオーナーのみ実行できます。',ephemeral:true});
         }
         if((g.adminRoleIds||[]).length>0 && !hasConfiguredAdminRole(interaction)){
@@ -629,7 +654,7 @@ AI生成機能は搭載していません。`
         store.shops[id]=shop;
         saveStore(store);
         return interaction.reply({
-          content:`✅ 自動販売機 #${id}「${shop.name}」を作成しました。\nオーナー: <@${shop.ownerId}>\n注文通知: <#${shop.orderChannelId}>`,
+          content:`✅ 自動販売機 #${id}「${shop.name}」を作成しました。\nオーナー: <@${shop.ownerId}>\n注文通知: <#${shop.orderChannelId}>\n購入履歴: <#${shop.historyChannelId}>`,
           ephemeral:true
         });
       }
@@ -663,14 +688,14 @@ AI生成機能は搭載していません。`
         if(salesCh)shop.salesChannelId=salesCh.id;
         if(historyCh)shop.historyChannelId=historyCh.id;
         saveStore(store);
-        return interaction.reply({content:'✅ 自販機設定を更新しました。',ephemeral:true});
+        return interaction.reply({content:`✅ 自販機設定を更新しました。\n購入履歴固定先: ${shop.historyChannelId?`<#${shop.historyChannelId}>`:'未設定'}`,ephemeral:true});
       }
 
       if (n === 'shop-delete') {
         const shop=store.shops[interaction.options.getInteger('shop_id')];
         if(!shop||shop.guildId!==interaction.guildId)return interaction.reply({content:'❌ 自販機が見つかりません。',ephemeral:true});
 
-        const allowed = isBotOwner(interaction.user.id)
+        const allowed = isBotOwnerUser(interaction.user)
           || shop.ownerId===interaction.user.id
           || hasConfiguredAdminRole(interaction)
           || interaction.memberPermissions?.has(PermissionFlagsBits.Administrator);
@@ -682,7 +707,7 @@ AI生成機能は搭載していません。`
       }
 
       if (n === 'shop-admin') {
-        if(!hasConfiguredAdminRole(interaction) && !interaction.memberPermissions?.has(PermissionFlagsBits.ManageGuild) && !isBotOwner(interaction.user.id)){
+        if(!hasConfiguredAdminRole(interaction) && !interaction.memberPermissions?.has(PermissionFlagsBits.ManageGuild) && !isBotOwnerUser(interaction.user)){
           return interaction.reply({content:'❌ 管理者のみ使用できます。',ephemeral:true});
         }
         const shops=Object.values(store.shops).filter(s=>s.guildId===interaction.guildId);
@@ -1031,9 +1056,20 @@ AI生成機能は搭載していません。`
         if(!/^([01]\d|2[0-3]):[0-5]\d$/.test(time))return interaction.reply({content:'❌ 時刻は HH:MM 形式です。例: 07:00',ephemeral:true});
         const regions=area==='全国'?PREFECTURES.map(x=>x[0]):expandWeatherRegion(area);
         if(!regions.length)return interaction.reply({content:`❌ 対象地域「${area}」を展開できませんでした。`,ephemeral:true});
-        g.weatherRegions=[...new Set(regions)]; g.weatherChannelId=ch.id; g.weatherAutoTime=time; g.weatherAutoEnabled=enabled; g.lastWeatherPostDate=null;
+        // 一括設定時は旧ルート設定を破棄し、指定チャンネルへ確実に統一する。
+        g.weatherRegions=[...new Set(regions)]; g.weatherChannelId=ch.id; g.weatherChannelRoutes={}; g.weatherAutoTime=time; g.weatherAutoEnabled=enabled; g.lastWeatherPostDate=null;
         g.weatherSetupUpdatedAt=new Date().toISOString(); saveStore(store);
-        return interaction.reply({content:`✅ **天気の自動配信・自動更新をまとめて設定しました。**\n対象: **${area}（${regions.length}都道府県）**\n投稿先: ${ch}\n毎日: **${time} JST**\n自動配信・更新: **${enabled?'ON':'OFF'}**\n※設定変更はBOT再起動なしで監視処理へ反映されます。`,ephemeral:true});
+        const testNow=interaction.options.getBoolean('test_now') ?? true;
+        await interaction.deferReply({ephemeral:true});
+        let testResult='テスト配信なし';
+        if(testNow){
+          try{
+            const pages=await buildWeatherPages(regions);
+            for(const page of pages)await ch.send(page);
+            testResult=`✅ テスト配信成功（${pages.length}メッセージ）`;
+          }catch(e){testResult=`❌ テスト配信失敗: ${String(e.message||e).slice(0,300)}`;console.error('weather setup test',e);}
+        }
+        return interaction.editReply({content:`✅ **天気の自動配信・自動更新をまとめて設定しました。**\n対象: **${area}（${regions.length}都道府県）**\n投稿先: ${ch}\n毎日: **${time} JST**\n自動配信・更新: **${enabled?'ON':'OFF'}**\n${testResult}\n※旧地域別投稿先はリセットし、このチャンネルへ統一しました。`});
       }
       if (n === 'earthquake-setup') {
         const g=guildData(store,interaction.guildId),area=interaction.options.getString('area',true),ch=interaction.options.getChannel('channel',true),min=interaction.options.getInteger('min_intensity')||3;
@@ -1042,7 +1078,17 @@ AI生成機能は搭載していません。`
         if(area!=='全国' && !regions.length)return interaction.reply({content:`❌ 対象地域「${area}」を展開できませんでした。`,ephemeral:true});
         g.earthquakeRegions=regions; g.earthquakeChannelId=ch.id; g.minIntensity=min; g.earthquakeAutoEnabled=enabled;
         g.earthquakeSetupUpdatedAt=new Date().toISOString(); saveStore(store);
-        return interaction.reply({content:`✅ **地震速報の自動配信・自動更新をまとめて設定しました。**\n対象: **${area}${regions.length?`（${regions.length}都道府県）`:''}**\n投稿先: ${ch}\n最低震度: **${min}**\n自動配信・更新: **${enabled?'ON':'OFF'}**\n※新着地震を継続監視し、同一イベントの重複配信を防止します。`,ephemeral:true});
+        const testNow=interaction.options.getBoolean('test_now') ?? true;
+        await interaction.deferReply({ephemeral:true});
+        let testResult='テスト配信なし';
+        if(testNow){
+          try{
+            const latest=await fetchLatestEarthquake();
+            await ch.send(`🧪 **地震速報テスト（現在の最新取得情報）**\n${earthquakeText(latest)}`);
+            testResult='✅ テスト配信成功';
+          }catch(e){testResult=`❌ テスト配信失敗: ${String(e.message||e).slice(0,300)}`;console.error('earthquake setup test',e);}
+        }
+        return interaction.editReply({content:`✅ **地震速報の自動配信・自動更新をまとめて設定しました。**\n対象: **${area}${regions.length?`（${regions.length}都道府県）`:''}**\n投稿先: ${ch}\n最低震度: **${min}**\n自動配信・更新: **${enabled?'ON':'OFF'}**\n${testResult}\n※新着地震を継続監視し、同一イベントの重複配信を防止します。`});
       }
 
       if (n === 'role-panel') {
@@ -1691,6 +1737,7 @@ ${url}`)],
 
     if (interaction.isButton() && interaction.customId==='support_help') return interaction.reply({content:'🆘 サポートサーバー: https://discord.gg/KGhYc6cWmq',ephemeral:true});
     if (interaction.isStringSelectMenu() && interaction.customId==='rolecolor') {
+      if(!hasConfiguredAdminRole(interaction))return interaction.reply({content:'❌ 管理者ロールが必要です。',ephemeral:true});
       const key=`${interaction.guildId}:${interaction.user.id}`,pending=pendingRoleCreates.get(key);
       if(!pending||Date.now()-pending.at>10*60*1000)return interaction.reply({content:'❌ 作成情報の期限が切れました。もう一度 `/role-create` を実行してください。',ephemeral:true});
       try{
@@ -1763,7 +1810,7 @@ ${url}`)],
         }
 
         const existing=Object.values(store.verificationRequests || {}).find(
-          r=>r.guildId===interaction.guildId && r.userId===interaction.user.id && r.status==='pending'
+          r=>r.guildId===interaction.guildId && r.userId===interaction.user.id && r.roleId===roleId && r.status==='pending'
         );
         if(existing){
           return interaction.reply({
@@ -2049,7 +2096,7 @@ ${url}`)],
         const canClose =
           interaction.user.id===ticket.userId ||
           interaction.memberPermissions?.has(PermissionFlagsBits.ManageChannels) ||
-          isBotOwner(interaction.user.id) ||
+          isBotOwnerUser(interaction.user) ||
           Boolean(g.ticketSupportRoleId && interaction.member?.roles?.cache?.has(g.ticketSupportRoleId));
 
         if(!canClose)return interaction.reply({content:'❌ チケットを閉じる権限がありません。',ephemeral:true});
@@ -2180,7 +2227,7 @@ ${url}`)],
       }).catch(()=>{});
 
       const historyChannelId=shop.historyChannelId||shop.orderChannelId;
-      if(historyChannelId && historyChannelId!==shop.orderChannelId){
+      if(historyChannelId){
         const historyCh=interaction.guild.channels.cache.get(historyChannelId)||await interaction.guild.channels.fetch(historyChannelId).catch(()=>null);
         if(historyCh?.isTextBased())await historyCh.send({embeds:[new EmbedBuilder().setTitle(`🧾 購入履歴 #${id}`).addFields({name:'購入者',value:`<@${interaction.user.id}> / ${interaction.user.username} / ID: ${interaction.user.id}`},{name:'商品',value:`${p.name} × ${qty}`},{name:'合計',value:`¥${order.total.toLocaleString()}`},{name:'日時',value:new Date().toLocaleString('ja-JP',{timeZone:'Asia/Tokyo'})})]}).catch(()=>{});
       }

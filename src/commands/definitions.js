@@ -12,6 +12,7 @@ export const commandData = [
     .addIntegerOption(o=>o.setName('id').setDescription('設定ID').setRequired(true)),
   new SlashCommandBuilder().setName('ping').setDescription('BOT応答確認'),
   new SlashCommandBuilder().setName('owner-status').setDescription('BOTオーナー判定を確認'),
+  new SlashCommandBuilder().setName('bot-restart').setDescription('【BOTオーナー専用】BOTを安全に再起動'),
   new SlashCommandBuilder().setName('admin-role-set').setDescription('【管理】管理者ロールを追加（複数設定可）')
     .addRoleOption(o=>o.setName('role').setDescription('追加する管理者ロール').setRequired(true)),
   new SlashCommandBuilder().setName('admin-role-remove').setDescription('【管理】管理者ロールを解除')
@@ -133,13 +134,15 @@ export const commandData = [
       {name:'全国47都道府県',value:'全国'},{name:'北海道地方',value:'北海道地方'},{name:'東北地方',value:'東北地方'},{name:'関東地方',value:'関東地方'},{name:'中部地方',value:'中部地方'},{name:'近畿地方',value:'近畿地方'},{name:'中国地方',value:'中国地方'},{name:'四国地方',value:'四国地方'},{name:'九州地方',value:'九州地方'},{name:'九州・沖縄地方',value:'九州・沖縄地方'},{name:'沖縄地方',value:'沖縄地方'}))
     .addChannelOption(o=>o.setName('channel').setDescription('投稿先').setRequired(true).addChannelTypes(ChannelType.GuildText))
     .addStringOption(o=>o.setName('time').setDescription('JST HH:MM').setRequired(true))
-    .addBooleanOption(o=>o.setName('enabled').setDescription('自動配信・自動更新をON/OFF（省略時ON）')),
+    .addBooleanOption(o=>o.setName('enabled').setDescription('自動配信・自動更新をON/OFF（省略時ON）'))
+    .addBooleanOption(o=>o.setName('test_now').setDescription('設定直後にテスト配信する（省略時ON）')),
   new SlashCommandBuilder().setName('earthquake-setup').setDescription('【管理者】地震速報を簡単設定')
     .addChannelOption(o=>o.setName('channel').setDescription('投稿先').setRequired(true).addChannelTypes(ChannelType.GuildText))
     .addStringOption(o=>o.setName('area').setDescription('全国または対象地方').setRequired(true).addChoices(
       {name:'全国',value:'全国'},{name:'北海道地方',value:'北海道地方'},{name:'東北地方',value:'東北地方'},{name:'関東地方',value:'関東地方'},{name:'中部地方',value:'中部地方'},{name:'近畿地方',value:'近畿地方'},{name:'中国地方',value:'中国地方'},{name:'四国地方',value:'四国地方'},{name:'九州地方',value:'九州地方'},{name:'九州・沖縄地方',value:'九州・沖縄地方'},{name:'沖縄地方',value:'沖縄地方'}))
     .addIntegerOption(o=>o.setName('min_intensity').setDescription('最低震度').setMinValue(1).setMaxValue(7))
-    .addBooleanOption(o=>o.setName('enabled').setDescription('自動配信・自動更新をON/OFF（省略時ON）')),
+    .addBooleanOption(o=>o.setName('enabled').setDescription('自動配信・自動更新をON/OFF（省略時ON）'))
+    .addBooleanOption(o=>o.setName('test_now').setDescription('設定直後に現在の地震情報をテスト配信する（省略時ON）')),
 
   new SlashCommandBuilder().setName('ticket-panel').setDescription('チケット作成パネル'),
   new SlashCommandBuilder().setName('ticket-settings').setDescription('チケットカテゴリ・サポートロール設定')
