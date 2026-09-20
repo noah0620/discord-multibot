@@ -89,10 +89,11 @@ export const commandData = [
     .addIntegerOption(o=>o.setName('shop_id').setDescription('自販機ID').setRequired(true)),
 
   new SlashCommandBuilder().setName('verify-panel').setDescription('用途を指定した認証申請パネルを設置')
+    // Discord API仕様: 必須オプションは任意オプションより前に置く
     .addStringOption(o=>o.setName('name').setDescription('申請名（例: R18閲覧 / 配信者申請）').setRequired(true))
-    .addStringOption(o=>o.setName('description').setDescription('申請条件・説明'))
     .addRoleOption(o=>o.setName('role').setDescription('承認後に付与するロール').setRequired(true))
-    .addChannelOption(o=>o.setName('approval_channel').setDescription('認証申請の承認通知を送るチャンネル').setRequired(true).addChannelTypes(ChannelType.GuildText)),
+    .addChannelOption(o=>o.setName('approval_channel').setDescription('認証申請の承認通知を送るチャンネル').setRequired(true).addChannelTypes(ChannelType.GuildText))
+    .addStringOption(o=>o.setName('description').setDescription('申請条件・説明')),
   new SlashCommandBuilder().setName('verify-admin').setDescription('【管理者】認証申請を確認・承認'),
   new SlashCommandBuilder().setName('verify-status').setDescription('【管理者】認証パネル設定を確認'),
   new SlashCommandBuilder().setName('verify-settings').setDescription('【管理者】認証申請の承認通知先を変更')
