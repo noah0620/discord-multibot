@@ -80,13 +80,13 @@ function buildChannelRolePanel(channelId,cfg,valid,page=0){
   const totalPages=Math.max(1,Math.ceil(valid.length/PAGE_SIZE));
   page=Math.max(0,Math.min(totalPages-1,page));
   const slice=valid.slice(page*PAGE_SIZE,page*PAGE_SIZE+PAGE_SIZE);
-  const lines=slice.map((x,i)=>`**${x.label}**：<@&${x.roleId}>`);
+  const lines=slice.map(x=>`**${x.label}**：<@&${x.roleId}> ${x.mode==='approval'?'🔒 承認制':'⚡ 即時付与'}`);
   const desc=[cfg.description||'',...lines].filter(Boolean).join('\n');
   const embed=new EmbedBuilder().setTitle(cfg.title||'チャンネルアクセス権限').setDescription(desc||'ボタンからロールを選択してください。');
   const rows=[];
   for(let i=0;i<slice.length;i+=5){
     rows.push(new ActionRowBuilder().addComponents(...slice.slice(i,i+5).map(x=>
-      new ButtonBuilder().setCustomId(`role:${x.roleId}`).setLabel(x.label).setStyle(ButtonStyle.Primary)
+      new ButtonBuilder().setCustomId(`${x.mode==='approval'?'roleapprove':'role'}:${x.roleId}:${channelId}`).setLabel(x.label).setStyle(x.mode==='approval'?ButtonStyle.Secondary:ButtonStyle.Primary)
     )));
   }
   if(totalPages>1){
@@ -1099,7 +1099,7 @@ AI生成機能は搭載していません。`
         for(const opt of (cfg.roleOptions||[])){
           const role=await interaction.guild.roles.fetch(opt.roleId).catch(()=>null);
           if(!role||rolePanelProblem(interaction.guild,role))continue;
-          valid.push({roleId:role.id,label:(opt.label||role.name).slice(0,80),roleName:role.name});
+          valid.push({roleId:role.id,label:(opt.label||role.name).slice(0,80),roleName:role.name,mode:opt.mode||'instant'});
         }
         if(!valid.length)return interaction.reply({content:'❌ このチャンネルにはロールがありません。先に `/role-add` をこのチャンネルで実行してください。',ephemeral:true});
         const page=0;
@@ -1114,17 +1114,21 @@ AI生成機能は搭載していません。`
         const problem=rolePanelProblem(interaction.guild,role);
         if(problem)return interaction.reply({content:`❌ ${problem}`,ephemeral:true});
         const label=interaction.options.getString('label',true).slice(0,80);
+        const mode=interaction.options.getString('mode')||'instant';
+        const approvalChannel=interaction.options.getChannel('approval_channel');
+        const reviewId=approvalChannel?.id||g.verificationReviewChannelId;
+        if(mode==='approval'&&!reviewId)return interaction.reply({content:'❌ 承認制ロールには approval_channel を指定するか /verify-settings で通知先を設定してください。',ephemeral:true});
         cfg.roleOptions=(cfg.roleOptions||[]).filter(x=>x.roleId!==role.id);
-        cfg.roleOptions.push({roleId:role.id,label});
+        cfg.roleOptions.push({roleId:role.id,label,mode,approvalChannelId:mode==='approval'?reviewId:null});
         saveStore(store);
-        return interaction.reply({content:`✅ <#${target.id}> 専用パネルに **${label}** → ${role} を追加しました。現在 **${cfg.roleOptions.length}件**。\nパネルを更新する場合は、そのチャンネルで \`/role-panel\` を実行してください。`,ephemeral:true});
+        return interaction.reply({content:`✅ <#${target.id}> 専用パネルに **${label}** → ${role}（${mode==='approval'?'承認制':'即時付与'}）を追加しました。現在 **${cfg.roleOptions.length}件**。\nパネルを更新する場合は、そのチャンネルで \`/role-panel\` を実行してください。`,ephemeral:true});
       }
 
       if (n === 'role-list') {
         const g=guildData(store,interaction.guildId); g.rolePanels ??= {};
         const target=interaction.options.getChannel('channel')||interaction.channel;
         const cfg=g.rolePanels[target.id]||{roleOptions:[]};
-        const lines=(cfg.roleOptions||[]).map((x,i)=>`${i+1}. **${x.label}** → <@&${x.roleId}>`);
+        const lines=(cfg.roleOptions||[]).map((x,i)=>`${i+1}. **${x.label}** → <@&${x.roleId}>（${x.mode==='approval'?'承認制':'即時付与'}）`);
         return interaction.reply({content:`🎭 <#${target.id}> のロール設定\n${lines.join('\n')||'保存済みロールはありません。'}`,ephemeral:true});
       }
 
@@ -1797,12 +1801,14 @@ ${url}`)],
     if (interaction.isButton()) {
       const [kind,a,b]=interaction.customId.split(':');
 
-      if (kind === 'verify' || kind === 'verifypanel') {
+      if (kind === 'verify' || kind === 'verifypanel' || kind === 'roleapprove') {
+        const approvalOption=kind==='roleapprove' ? guildData(store,interaction.guildId).rolePanels?.[b]?.roleOptions?.find(x=>x.roleId===a && x.mode==='approval') : null;
+        if(kind==='roleapprove' && (!approvalOption || interaction.channelId!==b))return interaction.reply({content:'❌ この承認制ロールは現在のパネルで設定されていません。',ephemeral:true});
         const panel=kind==='verifypanel' ? guildData(store,interaction.guildId).verificationPanels?.[a] : null;
         if(kind==='verifypanel' && !panel)return interaction.reply({content:'❌ 認証パネルの設定が見つかりません。',ephemeral:true});
         const requestedIds=panel?.roleIds || [a||guildData(store,interaction.guildId).verificationRoleId];
-        const panelName=panel?.name||'認証';
-        const panelReviewChannelId=panel?.approvalChannelId||b||guildData(store,interaction.guildId).verificationReviewChannelId;
+        const panelName=panel?.name||(kind==='roleapprove'?approvalOption.label:'認証');
+        const panelReviewChannelId=panel?.approvalChannelId||(kind==='roleapprove'?approvalOption.approvalChannelId:b)||guildData(store,interaction.guildId).verificationReviewChannelId;
         const roles=[];
         for(const id of requestedIds){
           const role=id ? await interaction.guild.roles.fetch(id).catch(()=>null) : null;
@@ -1817,7 +1823,7 @@ ${url}`)],
         const roleIds=roles.map(role=>role.id);
         const roleId=roleIds[0];
         const existing=Object.values(store.verificationRequests || {}).find(
-          r=>r.guildId===interaction.guildId && r.userId===interaction.user.id && (r.panelId ? r.panelId===a && kind==='verifypanel' : r.roleId===roleId && kind==='verify') && r.status==='pending'
+          r=>r.guildId===interaction.guildId && r.userId===interaction.user.id && (r.panelId ? r.panelId===(kind==='roleapprove'?`role:${b}:${a}`:a) : r.roleId===roleId && kind==='verify') && r.status==='pending'
         );
         if(existing){
           return interaction.reply({
@@ -1833,7 +1839,7 @@ ${url}`)],
           userId:interaction.user.id,
           roleId,
           roleIds,
-          panelId:kind==='verifypanel'?a:null,
+          panelId:kind==='verifypanel'?a:(kind==='roleapprove'?`role:${b}:${a}`:null),
           panelName,
           status:'pending',
           createdAt:new Date().toISOString(),
@@ -1852,9 +1858,8 @@ ${url}`)],
           if(reviewChannel?.isTextBased()){
             const reviewEmbed=new EmbedBuilder()
               .setTitle(`✅ 認証申請 #${id}`)
-              .setDescription(`<@${interaction.user.id}> から認証申請があります。`)
+              .setDescription(`申請者：<@${interaction.user.id}>\n申請内容：${panelName}`)
               .addFields(
-                {name:'申請者',value:`<@${interaction.user.id}>`},
                 {name:'ユーザーID',value:interaction.user.id},
                 {name:'承認後のロール',value:roleIds.map(id=>`<@&${id}>`).join('\n').slice(0,1024)},
                 {name:'申請日時',value:new Date().toLocaleString('ja-JP',{timeZone:'Asia/Tokyo'})}
@@ -1876,7 +1881,7 @@ ${url}`)],
             );
 
             const sent=await reviewChannel.send({
-              content:'🔔 **新しい認証申請があります。**',
+              content:null,
               embeds:[reviewEmbed],
               components:[reviewRow]
             }).catch(e=>{
@@ -1914,19 +1919,13 @@ ${url}`)],
           return interaction.reply({content:`ℹ️ この申請はすでに **${req.status==='approved'?'承認':'却下'}済み** です。`,ephemeral:true});
         }
 
-        req.reviewedAt=new Date().toISOString();
-        req.reviewedBy=interaction.user.id;
 
         if(b==='reject'){
-          req.status='rejected';
+          req.status='rejected'; req.reviewedAt=new Date().toISOString(); req.reviewedBy=interaction.user.id;
           saveStore(store);
           const user=await client.users.fetch(req.userId).catch(()=>null);
           await user?.send(`❌ ${interaction.guild.name} の認証申請 #${req.id} は却下されました。`).catch(()=>{});
-          return interaction.update({
-            content:`❌ 認証申請 #${req.id} を却下しました。`,
-            embeds:[],
-            components:[]
-          });
+          return interaction.update({content:null,embeds:[new EmbedBuilder().setTitle(`認証申請 #${req.id}`).setDescription(`申請者：<@${req.userId}>\n申請内容：${req.panelName||'認証'}\n状態：❌ 却下済み\n処理者：<@${interaction.user.id}>`).setTimestamp()],components:[]});
         }
 
         if(b==='approve'){
@@ -1944,17 +1943,13 @@ ${url}`)],
           try{
             const missing=roles.filter(role=>!member.roles.cache.has(role.id));
             if(missing.length)await member.roles.add(missing,`認証申請 #${req.id} を管理者が承認`);
-            req.status='approved';
+            req.status='approved'; req.reviewedAt=new Date().toISOString(); req.reviewedBy=interaction.user.id;
             saveStore(store);
 
             const user=await client.users.fetch(req.userId).catch(()=>null);
             await user?.send(`✅ ${interaction.guild.name} の認証申請 #${req.id} が承認され、${roles.map(r=>r.name).join("、")} が付与されました。`).catch(()=>{});
 
-            return interaction.update({
-              content:`✅ 認証申請 #${req.id} を承認し、<@${req.userId}> に ${roles.map(r=>`<@&${r.id}>`).join("、")} を付与しました。`,
-              embeds:[],
-              components:[]
-            });
+            return interaction.update({content:null,embeds:[new EmbedBuilder().setTitle(`認証申請 #${req.id}`).setDescription(`申請者：<@${req.userId}>\n申請内容：${req.panelName||'認証'}\n付与ロール：${roles.map(r=>`<@&${r.id}>`).join('、')}\n状態：✅ 承認済み\n処理者：<@${interaction.user.id}>`).setTimestamp()],components:[]});
           }catch(e){
             console.error('verify approve error',e);
             return interaction.reply({
@@ -1973,7 +1968,7 @@ ${url}`)],
         for(const opt of (cfg.roleOptions||[])){
           const role=await interaction.guild.roles.fetch(opt.roleId).catch(()=>null);
           if(!role||rolePanelProblem(interaction.guild,role))continue;
-          valid.push({roleId:role.id,label:(opt.label||role.name).slice(0,80),roleName:role.name});
+          valid.push({roleId:role.id,label:(opt.label||role.name).slice(0,80),roleName:role.name,mode:opt.mode||'instant'});
         }
         if(!valid.length)return interaction.reply({content:'❌ 表示できるロールがありません。',ephemeral:true});
         let page=Number(b)||0;
@@ -2008,6 +2003,9 @@ ${url}`)],
       }
 
       if (kind === 'role') {
+        const g=guildData(store,interaction.guildId);
+        const configured=g.rolePanels?.[b]?.roleOptions?.find(x=>x.roleId===a);
+        if(configured?.mode==='approval')return interaction.reply({content:'🔒 このロールは管理者承認が必要です。最新のパネルから申請してください。',ephemeral:true});
         const role=await interaction.guild.roles.fetch(a).catch(()=>null);
         if(!role){
           return interaction.reply({content:'❌ このロールは削除されているか、取得できません。管理者にパネルの作り直しを依頼してください。',ephemeral:true});

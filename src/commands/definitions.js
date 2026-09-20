@@ -114,6 +114,8 @@ export const commandData = [
   new SlashCommandBuilder().setName('role-add').setDescription('【管理者】チャンネル専用ロールパネルにロールを追加')
     .addStringOption(o=>o.setName('label').setDescription('ボタン名（例: A / ゲーム通知）').setRequired(true))
     .addRoleOption(o=>o.setName('role').setDescription('付与するロール').setRequired(true))
+    .addStringOption(o=>o.setName('mode').setDescription('ロールの取得方法').addChoices({name:'即時付与',value:'instant'},{name:'管理者承認',value:'approval'}))
+    .addChannelOption(o=>o.setName('approval_channel').setDescription('承認申請の通知先（承認制のみ）').addChannelTypes(ChannelType.GuildText))
     .addChannelOption(o=>o.setName('channel').setDescription('対象チャンネル（省略時は現在のチャンネル）').addChannelTypes(ChannelType.GuildText)),
   new SlashCommandBuilder().setName('role-list').setDescription('【管理者】チャンネル専用ロール一覧')
     .addChannelOption(o=>o.setName('channel').setDescription('対象チャンネル（省略時は現在のチャンネル）').addChannelTypes(ChannelType.GuildText)),
