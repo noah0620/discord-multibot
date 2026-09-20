@@ -1052,7 +1052,7 @@ AI生成機能は搭載していません。`
         const regions=area==='全国'?PREFECTURES.map(x=>x[0]):expandWeatherRegion(area);
         if(!regions.length)return interaction.reply({content:`❌ 対象地域「${area}」を展開できませんでした。`,ephemeral:true});
         // 一括設定時は旧ルート設定を破棄し、指定チャンネルへ確実に統一する。
-        g.weatherRegions=[...new Set(regions)]; g.weatherChannelId=ch.id; g.weatherChannelRoutes={}; g.weatherAutoTime=time; g.weatherAutoEnabled=enabled; g.lastWeatherPostDate=null;
+        g.weatherRegions=[...new Set(regions)]; g.weatherChannelId=ch.id; g.weatherChannelRoutes={}; g.weatherAutoTime=time; g.weatherAutoEnabled=enabled; g.lastWeatherPostDate=null; g.weatherLastSentByChannel={};
         g.weatherSetupUpdatedAt=new Date().toISOString(); saveStore(store);
         const testNow=interaction.options.getBoolean('test_now') ?? true;
         await interaction.deferReply({ephemeral:true});
@@ -1156,12 +1156,14 @@ AI生成機能は搭載していません。`
         const g=guildData(store,interaction.guildId);
         const category=interaction.options.getChannel('category');
         const support=interaction.options.getRole('support_role');
-        if(!category&&!support)return interaction.reply({content:'❌ カテゴリまたはサポートロールを指定してください。',ephemeral:true});
+        const logChannel=interaction.options.getChannel('log_channel');
+        if(!category&&!support&&!logChannel)return interaction.reply({content:'❌ カテゴリ・サポートロール・ログチャンネルのいずれかを指定してください。',ephemeral:true});
         if(category)g.ticketCategoryId=category.id;
         if(support)g.ticketSupportRoleId=support.id;
+        if(logChannel)g.ticketLogChannelId=logChannel.id;
         saveStore(store);
         return interaction.reply({
-          content:`✅ チケット設定を保存しました。\nカテゴリ: ${g.ticketCategoryId?`<#${g.ticketCategoryId}>`:'未設定'}\nサポートロール: ${g.ticketSupportRoleId?`<@&${g.ticketSupportRoleId}>`:'未設定'}`,
+          content:`✅ チケット設定を保存しました。\nカテゴリ: ${g.ticketCategoryId?`<#${g.ticketCategoryId}>`:'未設定'}\nサポートロール: ${g.ticketSupportRoleId?`<@&${g.ticketSupportRoleId}>`:'未設定'}\n作成ログ: ${g.ticketLogChannelId?`<#${g.ticketLogChannelId}>`:'未設定'}`,
           ephemeral:true
         });
       }
@@ -1169,7 +1171,7 @@ AI生成機能は搭載していません。`
       if (n === 'ticket-status') {
         const g=guildData(store,interaction.guildId);
         return interaction.reply({
-          content:`🔒 **チケット設定**\nカテゴリ: ${g.ticketCategoryId?`<#${g.ticketCategoryId}>`:'未設定'}\nサポートロール: ${g.ticketSupportRoleId?`<@&${g.ticketSupportRoleId}>`:'未設定'}\nオープン: ${Object.values(store.tickets||{}).filter(t=>t.guildId===interaction.guildId&&t.status==='open').length}件`,
+          content:`🔒 **チケット設定**\nカテゴリ: ${g.ticketCategoryId?`<#${g.ticketCategoryId}>`:'未設定'}\nサポートロール: ${g.ticketSupportRoleId?`<@&${g.ticketSupportRoleId}>`:'未設定'}\n作成ログ: ${g.ticketLogChannelId?`<#${g.ticketLogChannelId}>`:'未設定'}\nオープン: ${Object.values(store.tickets||{}).filter(t=>t.guildId===interaction.guildId&&t.status==='open').length}件`,
           ephemeral:true
         });
       }
@@ -2091,6 +2093,19 @@ ${url}`)],
             new ButtonBuilder().setCustomId(`ticketclose:${ticketId}`).setLabel('チケットを閉じる').setStyle(ButtonStyle.Danger)
           )]
         });
+        if(g.ticketLogChannelId){
+          const logCh=interaction.guild.channels.cache.get(g.ticketLogChannelId) || await interaction.guild.channels.fetch(g.ticketLogChannelId).catch(()=>null);
+          if(logCh?.isTextBased()){
+            await logCh.send({embeds:[new EmbedBuilder()
+              .setTitle('🎫 チケット作成ログ')
+              .addFields(
+                {name:'チケット',value:`#${ticketId} / <#${ch.id}>`,inline:false},
+                {name:'作成者',value:`<@${interaction.user.id}> / ID: ${interaction.user.id}`,inline:false},
+                {name:'作成日時',value:`<t:${Math.floor(Date.now()/1000)}:F>`,inline:false}
+              )
+              .setTimestamp()]}).catch(e=>console.error('ticket create log',e));
+          }
+        }
         return interaction.reply({content:`✅ ${ch} を作成しました。`,ephemeral:true});
       }
 
@@ -2446,16 +2461,33 @@ async function runWeatherWatcher(){
       }
       if(!groups.size){console.warn(`⚠️ 天気自動投稿 ${guild.id}: 投稿先未設定`);continue;}
 
-      let sentAny=false;
+      g.weatherLastSentByChannel??={};
+      let allSucceeded=true;
       for(const [channelId,regions] of groups){
-        const ch=guild.channels.cache.get(channelId)||await guild.channels.fetch(channelId).catch(()=>null);
-        if(!ch?.isTextBased()){console.warn(`⚠️ 天気自動投稿 ${guild.id}: channel ${channelId} 取得不可`);continue;}
-        const pages=await buildWeatherPages(regions);
-        for(const page of pages)await ch.send(page).catch(e=>{throw new Error(`Discord投稿失敗: ${e.message||e}`)});
-        sentAny=true;
-        console.log(`🌤️ 天気予報を自動投稿: ${guild.name} / ${ch.name} / ${regions.length}地域`);
+        // 同じ日の投稿に成功済みのチャンネルは再送しない。失敗したチャンネルだけ15秒後に再試行する。
+        if(g.weatherLastSentByChannel[channelId]===dateKey)continue;
+        try{
+          const ch=guild.channels.cache.get(channelId)||await guild.channels.fetch(channelId).catch(()=>null);
+          if(!ch?.isTextBased())throw new Error(`投稿先 channel ${channelId} を取得できません`);
+          const pages=await buildWeatherPages(regions);
+          if(!pages.length)throw new Error('天気ページを生成できませんでした');
+          for(const page of pages)await ch.send(page);
+          g.weatherLastSentByChannel[channelId]=dateKey;
+          saveStore(store);
+          console.log(`🌤️ 天気予報を自動投稿: ${guild.name} / ${ch.name} / ${regions.length}地域`);
+        }catch(error){
+          allSucceeded=false;
+          console.error(`❌ 天気自動投稿 ${guild.name} / channel ${channelId}:`,error);
+        }
       }
-      if(sentAny){g.lastWeatherPostDate=dateKey;saveStore(store);}
+      const pending=[...groups.keys()].filter(id=>g.weatherLastSentByChannel[id]!==dateKey);
+      if(allSucceeded && pending.length===0){
+        g.lastWeatherPostDate=dateKey;
+        saveStore(store);
+        console.log(`✅ 天気自動投稿 完了: ${guild.name} / ${dateKey}`);
+      }else if(pending.length){
+        console.warn(`⚠️ 天気自動投稿 再試行待ち: ${guild.name} / ${pending.length}チャンネル`);
+      }
     }
   }catch(e){console.error('❌ weather auto watcher',e);}
   finally{weatherWatcherBusy=false;}

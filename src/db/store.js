@@ -56,6 +56,7 @@ export function guildData(store, guildId) {
     verificationReviewChannelId: null,
     ticketCategoryId: null,
     ticketSupportRoleId: null,
+    ticketLogChannelId: null,
     roleOptions: [],
     rolePanels: {},
     verificationPanels: {},
@@ -98,6 +99,7 @@ export function guildData(store, guildId) {
   g.newsSeen ??= {};
   g.weatherRegions ??= [];
   g.weatherChannelRoutes ??= {};
+  g.weatherLastSentByChannel ??= {};
   g.earthquakeRegions ??= [];
   g.weatherSetupUpdatedAt ??= null;
   g.earthquakeSetupUpdatedAt ??= null;
@@ -109,6 +111,7 @@ export function guildData(store, guildId) {
   g.verificationReviewChannelId ??= null;
   g.ticketCategoryId ??= null;
   g.ticketSupportRoleId ??= null;
+  g.ticketLogChannelId ??= null;
   g.roleOptions ??= [];
   g.rolePanels ??= {};
   g.verificationPanels ??= {};

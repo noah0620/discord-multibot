@@ -149,9 +149,10 @@ export const commandData = [
     .addBooleanOption(o=>o.setName('test_now').setDescription('設定直後に現在の地震情報をテスト配信する（省略時ON）')),
 
   new SlashCommandBuilder().setName('ticket-panel').setDescription('チケット作成パネル'),
-  new SlashCommandBuilder().setName('ticket-settings').setDescription('チケットカテゴリ・サポートロール設定')
+  new SlashCommandBuilder().setName('ticket-settings').setDescription('チケットカテゴリ・サポートロール・作成ログ設定')
     .addChannelOption(o=>o.setName('category').setDescription('作成先カテゴリ').addChannelTypes(ChannelType.GuildCategory))
-    .addRoleOption(o=>o.setName('support_role').setDescription('サポートロール')),
+    .addRoleOption(o=>o.setName('support_role').setDescription('サポートロール'))
+    .addChannelOption(o=>o.setName('log_channel').setDescription('チケット作成ログの投稿先').addChannelTypes(ChannelType.GuildText)),
   new SlashCommandBuilder().setName('ticket-status').setDescription('チケット設定を確認'),
 
   new SlashCommandBuilder().setName('autoreply-add').setDescription('自動返信追加')
