@@ -26,7 +26,7 @@ const ADMIN_COMMANDS=new Set([
   'shop-admin','verify-panel','verify-admin','verify-status','verify-settings',
   'join-leave-settings','join-leave-status','welcome-settings','welcome-status','ticket-panel','ticket-settings','ticket-status',
   'autoreply-add','autoreply-remove','autoreply-list','guild-settings','guild-status','setting',
-  'social-source-add','social-source-remove','social-list','social-test','latest-add','media-add','media-remove',
+  'social-source-add','social-source-remove','social-list','social-test','latest-add','rsshub-status','media-add','media-remove',
   'news-source-add','news-source-remove','news-list','news-auto','news-test',
   'weather-auto-add','weather-auto-list','weather-auto-remove','weather-register','weather-admin','weather-channel','weather-channel-remove','weather-list','weather-auto',
   'earthquake-register','earthquake-list','earthquake-auto',
@@ -308,7 +308,7 @@ function newsEmbed(source,item){
 }
 async function fetchNewsFeed(source){return rssParser.parseURL(source.feedUrl);}
 
-const SOCIAL_RSS_BRIDGES=(process.env.SOCIAL_RSS_BRIDGE_URLS||process.env.SOCIAL_RSS_BRIDGE_URL||'https://rsshub.app')
+const SOCIAL_RSS_BRIDGES=(process.env.SOCIAL_RSS_BRIDGE_URLS||process.env.SOCIAL_RSS_BRIDGE_URL||'http://127.0.0.1:1200')
   .split(',').map(x=>x.trim().replace(/\/+$/,'')).filter(Boolean);
 
 function detectSocialPlatform(profileUrl){
@@ -380,7 +380,8 @@ client.on(Events.GuildMemberAdd, async member => {
     .setThumbnail(member.user.displayAvatarURL())
     .setTimestamp();
 
-  await ch.send({embeds:[embed]}).catch(e=>console.error('join log error',e));
+  const components=g.verificationPanelChannelId ? [new ActionRowBuilder().addComponents(new ButtonBuilder().setLabel('認証チャンネルへ移動').setStyle(ButtonStyle.Link).setURL(`https://discord.com/channels/${member.guild.id}/${g.verificationPanelChannelId}`))] : [];
+  await ch.send({embeds:[embed],components}).catch(e=>console.error('join log error',e));
 });
 
 client.on(Events.GuildMemberRemove, async member => {
@@ -883,42 +884,36 @@ AI生成機能は搭載していません。`
       }
 
       if (n === 'verify-panel') {
-        const role=interaction.options.getRole('role',true);
-        const problem=rolePanelProblem(interaction.guild,role);
-        if(problem){
-          return interaction.reply({
-            content:`❌ 認証ロールを設定できません。\n${problem}`,
-            ephemeral:true
-          });
+        const firstRole=interaction.options.getRole('role',true);
+        const raw=(interaction.options.getString('additional_roles')||'').trim();
+        const extraIds=raw ? raw.split(/[\s,、，]+/).filter(Boolean).map(v=>v.replace(/^<@&([0-9]+)>$/,'$1')) : [];
+        const ids=[...new Set([firstRole.id,...extraIds])];
+        if(ids.length>20)return interaction.reply({content:'❌ 1パネルにつき最大20ロールまで設定できます。',ephemeral:true});
+        if(ids.some(id=>!/^\d{17,22}$/.test(id)))return interaction.reply({content:'❌ 追加ロールにはロールIDまたはロールメンションをカンマ区切りで入力してください。',ephemeral:true});
+        const roles=[];
+        for(const id of ids){
+          const role=await interaction.guild.roles.fetch(id).catch(()=>null);
+          if(!role)return interaction.reply({content:`❌ ロールID ${id} が見つかりません。`,ephemeral:true});
+          const problem=rolePanelProblem(interaction.guild,role);
+          if(problem)return interaction.reply({content:`❌ ${role.name}: ${problem}`,ephemeral:true});
+          roles.push(role);
         }
-
         const g=guildData(store,interaction.guildId);
         const applicationName=interaction.options.getString('name',true).slice(0,80);
         const applicationDescription=(interaction.options.getString('description')||'管理者が内容を確認して承認します。').slice(0,1000);
         const approvalChannel=interaction.options.getChannel('approval_channel',true);
-        g.verificationRoleId=role.id;
-        g.verificationReviewChannelId=approvalChannel.id;
+        g.verificationPanels ??= {};
+        const panelId=`${Date.now().toString(36)}${Math.random().toString(36).slice(2,7)}`;
+        g.verificationPanels[panelId]={name:applicationName,description:applicationDescription,roleIds:roles.map(r=>r.id),approvalChannelId:approvalChannel.id};
         saveStore(store);
-
         return interaction.reply({
-          embeds:[
-            new EmbedBuilder()
-              .setTitle(`✅ ${applicationName}`)
-              .setDescription(`${applicationDescription}\n\n下の **申請する** ボタンを押してください。`)
-              .addFields(
-                {name:'承認後のロール',value:`<@&${role.id}>`},
-                {name:'申請通知先',value:`<#${approvalChannel.id}>`}
-              )
-          ],
-          components:[
-            new ActionRowBuilder().addComponents(
-              new ButtonBuilder()
-                .setCustomId(`verify:${role.id}:${approvalChannel.id}`)
-                .setLabel(`${applicationName}を申請`.slice(0,80))
-                .setEmoji('✅')
-                .setStyle(ButtonStyle.Primary)
-            )
-          ]
+          embeds:[new EmbedBuilder().setTitle(`✅ ${applicationName}`)
+            .setDescription(`${applicationDescription}\n\n下の **申請する** ボタンを押してください。`)
+            .addFields({name:'承認後のロール',value:roles.map(r=>`<@&${r.id}>`).join('\n').slice(0,1024)},
+              {name:'申請通知先',value:`<#${approvalChannel.id}>`})],
+          components:[new ActionRowBuilder().addComponents(new ButtonBuilder()
+            .setCustomId(`verifypanel:${panelId}`).setLabel(`${applicationName}を申請`.slice(0,80))
+            .setEmoji('✅').setStyle(ButtonStyle.Primary))]
         });
       }
 
@@ -941,7 +936,7 @@ AI生成機能は搭載していません。`
             .setDescription(`<@${req.userId}> から認証申請があります。`)
             .addFields(
               {name:'ユーザーID',value:req.userId},
-              {name:'承認後のロール',value:`<@&${req.roleId}>`},
+              {name:'承認後のロール',value:(req.roleIds||[req.roleId]).map(id=>`<@&${id}>`).join('\n').slice(0,1024)},
               {name:'申請日時',value:new Date(req.createdAt).toLocaleString('ja-JP',{timeZone:'Asia/Tokyo'})}
             )
         );
@@ -1259,6 +1254,15 @@ AI生成機能は搭載していません。`
         g.mediaLibrary=g.mediaLibrary.filter(x=>x.id!==id); saveStore(store);
         return interaction.reply({content:before===g.mediaLibrary.length?'❌ メディアIDが見つかりません。':`✅ メディア #${id} を削除しました。`,ephemeral:true});
       }
+      if (n === 'rsshub-status') {
+        const base=SOCIAL_RSS_BRIDGES[0];
+        try {
+          const url=new URL(base);
+          if(!['http:','https:'].includes(url.protocol))throw new Error('URL形式が不正です');
+          const response=await fetch(url,{signal:AbortSignal.timeout(8000)});
+          return interaction.reply({content:`📡 RSSHub: ${response.ok?'接続成功':'応答あり（HTTP '+response.status+'）'}\n接続先: ${url.origin}\n※ Xのフィード取得可否は /latest-add で個別に確認してください。`,ephemeral:true});
+        }catch(e){return interaction.reply({content:`❌ RSSHub接続失敗: ${String(e.message||e).slice(0,300)}\n.env の SOCIAL_RSS_BRIDGE_URL と Docker起動状態を確認してください。`,ephemeral:true});}
+      }
       if (n === 'latest-add') {
         const g=guildData(store,interaction.guildId), input=interaction.options.getString('url',true), channel=interaction.options.getChannel('channel',true);
         let resolved,name='最新情報';
@@ -1268,7 +1272,9 @@ AI生成機能は搭載していません。`
           else { await rssParser.parseURL(input); resolved={feedUrl:input,method:'RSS/Atom'}; name=new URL(input).hostname; }
         }catch(e){return interaction.reply({content:`❌ URLから取得方式を判定できませんでした。\n${String(e.message||e).slice(0,800)}`,ephemeral:true});}
         const id=g.nextSocialSourceId++;
-        g.socialSources.push({id,name,profileUrl:input,feedUrl:resolved.feedUrl,channelId:channel.id,method:resolved.method,active:true}); saveStore(store);
+        const initialFeed=await rssParser.parseURL(resolved.feedUrl);
+        g.socialSources.push({id,name,platform:platform||'rss',profileUrl:input,feedUrl:resolved.feedUrl,channelId:channel.id,method:resolved.method,active:true});
+        g.socialSeen??={};g.socialSeen[id]=(initialFeed.items||[]).slice(0,50).map(newsItemKey);saveStore(store);
         return interaction.reply({content:`✅ 最新情報 #${id} を登録しました。\n取得方式: **${resolved.method}**\n投稿先: ${channel}`,ephemeral:true});
       }
 
@@ -1791,26 +1797,27 @@ ${url}`)],
     if (interaction.isButton()) {
       const [kind,a,b]=interaction.customId.split(':');
 
-      if (kind === 'verify') {
-        const roleId=a||guildData(store,interaction.guildId).verificationRoleId;
-        const panelReviewChannelId=b||guildData(store,interaction.guildId).verificationReviewChannelId;
-        if(!roleId)return interaction.reply({content:'❌ 認証ロール未設定です。',ephemeral:true});
-
-        const role=await interaction.guild.roles.fetch(roleId).catch(()=>null);
-        if(!role)return interaction.reply({content:'❌ 認証ロールが見つかりません。管理者が認証パネルを作り直してください。',ephemeral:true});
-
-        const problem=rolePanelProblem(interaction.guild,role);
-        if(problem)return interaction.reply({content:`❌ ${problem}`,ephemeral:true});
-
+      if (kind === 'verify' || kind === 'verifypanel') {
+        const panel=kind==='verifypanel' ? guildData(store,interaction.guildId).verificationPanels?.[a] : null;
+        if(kind==='verifypanel' && !panel)return interaction.reply({content:'❌ 認証パネルの設定が見つかりません。',ephemeral:true});
+        const requestedIds=panel?.roleIds || [a||guildData(store,interaction.guildId).verificationRoleId];
+        const panelName=panel?.name||'認証';
+        const panelReviewChannelId=panel?.approvalChannelId||b||guildData(store,interaction.guildId).verificationReviewChannelId;
+        const roles=[];
+        for(const id of requestedIds){
+          const role=id ? await interaction.guild.roles.fetch(id).catch(()=>null) : null;
+          if(!role)return interaction.reply({content:'❌ 認証ロールが見つかりません。管理者に確認してください。',ephemeral:true});
+          const problem=rolePanelProblem(interaction.guild,role);
+          if(problem)return interaction.reply({content:`❌ ${role.name}: ${problem}`,ephemeral:true});
+          roles.push(role);
+        }
         const member=await interaction.guild.members.fetch(interaction.user.id).catch(()=>null);
         if(!member)return interaction.reply({content:'❌ メンバー情報を取得できませんでした。',ephemeral:true});
-
-        if(member.roles.cache.has(role.id)){
-          return interaction.reply({content:`✅ すでに **${role.name}** が付与されています。`,ephemeral:true});
-        }
-
+        if(roles.every(role=>member.roles.cache.has(role.id)))return interaction.reply({content:'✅ 対象ロールはすべて付与済みです。',ephemeral:true});
+        const roleIds=roles.map(role=>role.id);
+        const roleId=roleIds[0];
         const existing=Object.values(store.verificationRequests || {}).find(
-          r=>r.guildId===interaction.guildId && r.userId===interaction.user.id && r.roleId===roleId && r.status==='pending'
+          r=>r.guildId===interaction.guildId && r.userId===interaction.user.id && (r.panelId ? r.panelId===a && kind==='verifypanel' : r.roleId===roleId && kind==='verify') && r.status==='pending'
         );
         if(existing){
           return interaction.reply({
@@ -1825,6 +1832,9 @@ ${url}`)],
           guildId:interaction.guildId,
           userId:interaction.user.id,
           roleId,
+          roleIds,
+          panelId:kind==='verifypanel'?a:null,
+          panelName,
           status:'pending',
           createdAt:new Date().toISOString(),
           reviewedAt:null,
@@ -1846,7 +1856,7 @@ ${url}`)],
               .addFields(
                 {name:'申請者',value:`<@${interaction.user.id}>`},
                 {name:'ユーザーID',value:interaction.user.id},
-                {name:'承認後のロール',value:`<@&${roleId}>`},
+                {name:'承認後のロール',value:roleIds.map(id=>`<@&${id}>`).join('\n').slice(0,1024)},
                 {name:'申請日時',value:new Date().toLocaleString('ja-JP',{timeZone:'Asia/Tokyo'})}
               )
               .setThumbnail(interaction.user.displayAvatarURL())
@@ -1885,7 +1895,7 @@ ${url}`)],
 
         return interaction.reply({
           content:notifySent
-            ? `✅ 認証申請を送信しました。（申請 #${id}）\n管理者へ通知しました。承認されると **${role.name}** が付与されます。`
+            ? `✅ 認証申請を送信しました。（申請 #${id}）\n管理者へ通知しました。承認されると **${roles.map(r=>r.name).join('、')}** が付与されます。`
             : `✅ 認証申請を保存しました。（申請 #${id}）\n⚠️ 承認通知チャンネルへの通知に失敗しました。管理者は \`/verify-admin\` から確認できます。`,
           ephemeral:true
         });
@@ -1920,30 +1930,28 @@ ${url}`)],
         }
 
         if(b==='approve'){
-          const role=await interaction.guild.roles.fetch(req.roleId).catch(()=>null);
           const member=await interaction.guild.members.fetch(req.userId).catch(()=>null);
-
-          if(!role || !member){
-            return interaction.reply({content:'❌ 対象メンバーまたは認証ロールを取得できません。',ephemeral:true});
-          }
-
-          const problem=rolePanelProblem(interaction.guild,role);
-          if(problem){
-            return interaction.reply({content:`❌ 承認できません。${problem}`,ephemeral:true});
+          if(!member)return interaction.reply({content:'❌ 対象メンバーが見つかりません。',ephemeral:true});
+          const roles=[];
+          for(const id of (req.roleIds||[req.roleId])){
+            const role=await interaction.guild.roles.fetch(id).catch(()=>null);
+            if(!role)return interaction.reply({content:`❌ ロール ${id} が見つかりません。`,ephemeral:true});
+            const problem=rolePanelProblem(interaction.guild,role);
+            if(problem)return interaction.reply({content:`❌ ${role.name}: ${problem}`,ephemeral:true});
+            roles.push(role);
           }
 
           try{
-            if(!member.roles.cache.has(role.id)){
-              await member.roles.add(role,`認証申請 #${req.id} を管理者が承認`);
-            }
+            const missing=roles.filter(role=>!member.roles.cache.has(role.id));
+            if(missing.length)await member.roles.add(missing,`認証申請 #${req.id} を管理者が承認`);
             req.status='approved';
             saveStore(store);
 
             const user=await client.users.fetch(req.userId).catch(()=>null);
-            await user?.send(`✅ ${interaction.guild.name} の認証申請 #${req.id} が承認され、${role.name} が付与されました。`).catch(()=>{});
+            await user?.send(`✅ ${interaction.guild.name} の認証申請 #${req.id} が承認され、${roles.map(r=>r.name).join("、")} が付与されました。`).catch(()=>{});
 
             return interaction.update({
-              content:`✅ 認証申請 #${req.id} を承認し、<@${req.userId}> に <@&${role.id}> を付与しました。`,
+              content:`✅ 認証申請 #${req.id} を承認し、<@${req.userId}> に ${roles.map(r=>`<@&${r.id}>`).join("、")} を付与しました。`,
               embeds:[],
               components:[]
             });
@@ -2323,6 +2331,7 @@ setInterval(async()=>{
     if(!g.socialSources?.length)continue;
     g.socialSeen??={};
     for(const source of g.socialSources){
+      if(source.enabled===false||source.active===false)continue;
       try{
         const feed=await rssParser.parseURL(source.feedUrl);
         source.lastError=null;

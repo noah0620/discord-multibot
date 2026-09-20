@@ -93,6 +93,7 @@ export const commandData = [
     .addStringOption(o=>o.setName('name').setDescription('申請名（例: R18閲覧 / 配信者申請）').setRequired(true))
     .addRoleOption(o=>o.setName('role').setDescription('承認後に付与するロール').setRequired(true))
     .addChannelOption(o=>o.setName('approval_channel').setDescription('認証申請の承認通知を送るチャンネル').setRequired(true).addChannelTypes(ChannelType.GuildText))
+    .addStringOption(o=>o.setName('additional_roles').setDescription('追加ロールID/メンションをカンマ区切り（最大19件）'))
     .addStringOption(o=>o.setName('description').setDescription('申請条件・説明')),
   new SlashCommandBuilder().setName('verify-admin').setDescription('【管理者】認証申請を確認・承認'),
   new SlashCommandBuilder().setName('verify-status').setDescription('【管理者】認証パネル設定を確認'),
@@ -179,6 +180,7 @@ export const commandData = [
     ))
     .addStringOption(o=>o.setName('value').setDescription('Discord ID').setRequired(true)),
 
+  new SlashCommandBuilder().setName('rsshub-status').setDescription('【管理者】自前RSSHubの接続状態を確認'),
   new SlashCommandBuilder().setName('latest-add').setDescription('【管理者】URLを貼るだけで最新情報の自動取得を登録')
     .addStringOption(o=>o.setName('url').setDescription('プロフィールURLまたはRSS/Atom URL').setRequired(true))
     .addChannelOption(o=>o.setName('channel').setDescription('新着の投稿先').setRequired(true).addChannelTypes(ChannelType.GuildText)),
