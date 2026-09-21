@@ -24,9 +24,9 @@ process.on('uncaughtException',e=>console.error('⚠️ uncaughtException (BOT�
 // 管理者・ショップ・URL・音声の共通ヘルパー
 const ADMIN_COMMANDS=new Set([
   'shop-admin','verify-panel','verify-admin','verify-status','verify-settings',
-  'join-leave-settings','join-leave-status','welcome-settings','welcome-status','ticket-panel','ticket-settings','ticket-status',
+  'join-leave-settings','join-leave-status','welcome-settings','welcome-status','ticket-panel','ticket-settings','ticket-status','ticket-log-channel',
   'autoreply-add','autoreply-remove','autoreply-list','guild-settings','guild-status','setting',
-  'social-source-add','social-source-remove','social-list','social-test','latest-add','rsshub-status','media-add','media-remove',
+  'social-source-add','social-source-remove','social-list','social-test','latest-add','x-add','x-list','x-edit','x-remove','x-test','rsshub-status','media-add','media-remove',
   'news-source-add','news-source-remove','news-list','news-auto','news-test',
   'weather-auto-add','weather-auto-list','weather-auto-remove','weather-register','weather-admin','weather-channel','weather-channel-remove','weather-list','weather-auto',
   'earthquake-register','earthquake-list','earthquake-auto',
@@ -1175,6 +1175,29 @@ AI生成機能は搭載していません。`
         });
       }
 
+      if (n === 'ticket-log-channel') {
+        const g=guildData(store,interaction.guildId);
+        const channel=interaction.options.getChannel('channel');
+        const disable=interaction.options.getBoolean('disable') ?? false;
+        if(disable && channel)return interaction.reply({content:'❌ channel と disable:true は同時に指定できません。',ephemeral:true});
+        if(disable){
+          g.ticketLogChannelId=null;
+          saveStore(store);
+          return interaction.reply({content:'✅ チケット作成ログの自動投稿を停止しました。',ephemeral:true});
+        }
+        if(channel){
+          const me=interaction.guild.members.me || await interaction.guild.members.fetchMe();
+          const permissions=channel.permissionsFor(me);
+          if(!permissions?.has([PermissionFlagsBits.ViewChannel,PermissionFlagsBits.SendMessages,PermissionFlagsBits.EmbedLinks])){
+            return interaction.reply({content:'❌ BOTに「チャンネルを見る」「メッセージを送信」「埋め込みリンク」の権限が必要です。投稿先は変更していません。',ephemeral:true});
+          }
+          g.ticketLogChannelId=channel.id;
+          saveStore(store);
+          return interaction.reply({content:`✅ チケット作成ログの投稿先を ${channel} に変更しました。次のチケット作成から適用されます。`,ephemeral:true});
+        }
+        return interaction.reply({content:`🎫 チケット作成ログの投稿先: ${g.ticketLogChannelId?`<#${g.ticketLogChannelId}>`:'未設定（停止中）'}`,ephemeral:true});
+      }
+
       if (n === 'ticket-status') {
         const g=guildData(store,interaction.guildId);
         return interaction.reply({
@@ -1275,6 +1298,59 @@ AI生成機能は搭載していません。`
           const response=await fetch(url,{signal:AbortSignal.timeout(8000)});
           return interaction.reply({content:`📡 RSSHub: ${response.ok?'接続成功':'応答あり（HTTP '+response.status+'）'}\n接続先: ${url.origin}\n※ Xのフィード取得可否は /latest-add で個別に確認してください。`,ephemeral:true});
         }catch(e){return interaction.reply({content:`❌ RSSHub接続失敗: ${String(e.message||e).slice(0,300)}\n.env の SOCIAL_RSS_BRIDGE_URL と Docker起動状態を確認してください。`,ephemeral:true});}
+      }
+      // Xプロフィールを複数登録・管理。既存のSNS監視と同じ保存領域を利用。
+      if (n === 'x-add') {
+        const g=guildData(store,interaction.guildId);
+        const input=interaction.options.getString('url',true).trim();
+        const channel=interaction.options.getChannel('channel',true);
+        const platform=detectSocialPlatform(input);
+        const username=socialUsername('twitter',input);
+        if(platform!=='twitter'||!username||!/^\w{1,15}$/.test(username))return interaction.reply({content:'❌ XのプロフィールURL（https://x.com/ユーザー名）を指定してください。',ephemeral:true});
+        if(!channel?.isTextBased())return interaction.reply({content:'❌ テキストチャンネルを指定してください。',ephemeral:true});
+        await interaction.deferReply({ephemeral:true});
+        try{
+          const resolved=await resolveSocialFeedAuto('twitter',input);
+          const feed=await rssParser.parseURL(resolved.feedUrl);
+          g.socialSources??=[];g.socialSeen??={};
+          const existing=g.socialSources.find(x=>x.platform==='twitter'&&socialUsername('twitter',x.profileUrl)?.toLowerCase()===username.toLowerCase()&&x.channelId===channel.id);
+          if(existing)return interaction.editReply(`ℹ️ 同じアカウントと投稿先は登録済みです（#${existing.id}）。`);
+          const id=g.nextSocialSourceId++;
+          g.socialSources.push({id,name:`X @${username}`,platform:'twitter',profileUrl:input,feedUrl:resolved.feedUrl,channelId:channel.id,method:resolved.method,enabled:true,createdAt:new Date().toISOString(),lastError:null});
+          g.socialSeen[id]=(feed.items||[]).slice(0,50).map(newsItemKey);saveStore(store);
+          return interaction.editReply(`✅ X @${username} を登録しました（ID: ${id}）。\n投稿先: ${channel}\n取得方式: ${resolved.method}\n登録前の投稿は通知せず、次の新着から通知します。`);
+        }catch(e){console.error('x-add',e);return interaction.editReply(`❌ Xの取得経路を確認できませんでした。RSSHubの稼働・Xへのアクセスを確認してください。\n${String(e.message||e).slice(0,500)}`);}
+      }
+      if(n==='x-list'){
+        const g=guildData(store,interaction.guildId),sources=(g.socialSources||[]).filter(x=>x.platform==='twitter');
+        const pages=splitDiscordBlocks(`📡 **X監視一覧（${sources.length}件）**`,sources.map(x=>`#${x.id} ${x.profileUrl} → <#${x.channelId}>${x.lastError?' ⚠️ '+x.lastError:''}`),1900);
+        await interaction.reply({content:pages[0],ephemeral:true});
+        for(const page of pages.slice(1))await interaction.followUp({content:page,ephemeral:true});
+        return;
+      }
+      if(n==='x-edit'||n==='x-remove'||n==='x-test'){
+        const g=guildData(store,interaction.guildId),id=interaction.options.getInteger('id',true);
+        const source=(g.socialSources||[]).find(x=>x.id===id&&x.platform==='twitter');
+        if(!source)return interaction.reply({content:'❌ 指定したX登録IDが見つかりません。',ephemeral:true});
+        if(n==='x-remove'){
+          g.socialSources=g.socialSources.filter(x=>x!==source);delete g.socialSeen[id];saveStore(store);
+          return interaction.reply({content:`✅ X監視 #${id} を削除しました。`,ephemeral:true});
+        }
+        if(n==='x-edit'){
+          const channel=interaction.options.getChannel('channel',true);
+          if(!channel?.isTextBased())return interaction.reply({content:'❌ テキストチャンネルを指定してください。',ephemeral:true});
+          source.channelId=channel.id;saveStore(store);
+          return interaction.reply({content:`✅ X監視 #${id} の投稿先を ${channel} に変更しました。`,ephemeral:true});
+        }
+        await interaction.deferReply({ephemeral:true});
+        try{
+          const feed=await rssParser.parseURL(source.feedUrl),item=feed.items?.[0];
+          if(!item)return interaction.editReply('❌ 最新投稿が取得できませんでした。');
+          const ch=await interaction.guild.channels.fetch(source.channelId).catch(()=>null);
+          if(!ch?.isTextBased())return interaction.editReply('❌ 投稿先が見つかりません。');
+          await ch.send({content:'📡 **X / 最新投稿テスト**',embeds:[newsEmbed({name:source.name||'X'},item)]});
+          return interaction.editReply(`✅ ${ch} にテスト投稿しました。`);
+        }catch(e){console.error('x-test',e);return interaction.editReply(`❌ テスト失敗: ${String(e.message||e).slice(0,400)}`);}
       }
       if (n === 'latest-add') {
         const g=guildData(store,interaction.guildId), input=interaction.options.getString('url',true), channel=interaction.options.getChannel('channel',true);
@@ -2360,7 +2436,11 @@ setInterval(async()=>{
 },60*60*1000);
 
 // SNS最新情報: Twitter/X・YouTube・Instagram RSSを60秒ごとに確認
+let socialWatcherBusy=false;
 setInterval(async()=>{
+  if(socialWatcherBusy)return;
+  socialWatcherBusy=true;
+  try{
   for(const guild of client.guilds.cache.values()){
     const g=guildData(store,guild.id);
     if(!g.socialSources?.length)continue;
@@ -2376,13 +2456,15 @@ setInterval(async()=>{
         const ch=guild.channels.cache.get(source.channelId)||await guild.channels.fetch(source.channelId).catch(()=>null);
         if(!ch?.isTextBased())continue;
         for(const item of fresh.slice(-10)){
-          await ch.send({content:`📡 **${source.platform} / 最新情報**`,embeds:[newsEmbed({name:source.platform},item)]});
+          await ch.send({content:`📡 **${source.platform} / 最新情報**`,embeds:[newsEmbed({name:source.name||source.platform},item)]});
+          seen.add(newsItemKey(item));
+          g.socialSeen[source.id]=[...seen].slice(-100);
+          saveStore(store);
         }
-        g.socialSeen[source.id]=[...new Set([...items.map(newsItemKey),...seen])].slice(0,100);
-        saveStore(store);
       }catch(e){source.lastError=String(e.message||e).slice(0,300);saveStore(store);console.error(`social watcher ${guild.id}/${source.id}`,e);}
     }
   }
+  }finally{socialWatcherBusy=false;}
 },60*1000);
 
 // NEWS ALERTS: RSS/Atomを60秒ごとに確認

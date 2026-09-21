@@ -153,6 +153,9 @@ export const commandData = [
     .addChannelOption(o=>o.setName('category').setDescription('作成先カテゴリ').addChannelTypes(ChannelType.GuildCategory))
     .addRoleOption(o=>o.setName('support_role').setDescription('サポートロール'))
     .addChannelOption(o=>o.setName('log_channel').setDescription('チケット作成ログの投稿先').addChannelTypes(ChannelType.GuildText)),
+  new SlashCommandBuilder().setName('ticket-log-channel').setDescription('チケット作成ログの投稿先を変更・停止・確認')
+    .addChannelOption(o=>o.setName('channel').setDescription('新しいログ投稿先').addChannelTypes(ChannelType.GuildText))
+    .addBooleanOption(o=>o.setName('disable').setDescription('ログ投稿を停止する（true）')),
   new SlashCommandBuilder().setName('ticket-status').setDescription('チケット設定を確認'),
 
   new SlashCommandBuilder().setName('autoreply-add').setDescription('自動返信追加')
@@ -184,6 +187,17 @@ export const commandData = [
     .addStringOption(o=>o.setName('value').setDescription('Discord ID').setRequired(true)),
 
   new SlashCommandBuilder().setName('rsshub-status').setDescription('【管理者】自前RSSHubの接続状態を確認'),
+  new SlashCommandBuilder().setName('x-add').setDescription('【管理者】XプロフィールURLから新着投稿を自動通知')
+    .addStringOption(o=>o.setName('url').setDescription('https://x.com/ユーザー名').setRequired(true))
+    .addChannelOption(o=>o.setName('channel').setDescription('通知先チャンネル').setRequired(true).addChannelTypes(ChannelType.GuildText)),
+  new SlashCommandBuilder().setName('x-list').setDescription('【管理者】登録済みXアカウント一覧'),
+  new SlashCommandBuilder().setName('x-edit').setDescription('【管理者】X通知先チャンネルを変更')
+    .addIntegerOption(o=>o.setName('id').setDescription('登録ID').setRequired(true))
+    .addChannelOption(o=>o.setName('channel').setDescription('新しい通知先').setRequired(true).addChannelTypes(ChannelType.GuildText)),
+  new SlashCommandBuilder().setName('x-remove').setDescription('【管理者】Xアカウントの監視を削除')
+    .addIntegerOption(o=>o.setName('id').setDescription('登録ID').setRequired(true)),
+  new SlashCommandBuilder().setName('x-test').setDescription('【管理者】Xの最新投稿をテスト送信')
+    .addIntegerOption(o=>o.setName('id').setDescription('登録ID').setRequired(true)),
   new SlashCommandBuilder().setName('latest-add').setDescription('【管理者】URLを貼るだけで最新情報の自動取得を登録')
     .addStringOption(o=>o.setName('url').setDescription('プロフィールURLまたはRSS/Atom URL').setRequired(true))
     .addChannelOption(o=>o.setName('channel').setDescription('新着の投稿先').setRequired(true).addChannelTypes(ChannelType.GuildText)),
