@@ -10,6 +10,13 @@ export const commandData = [
   new SlashCommandBuilder().setName('weather-auto-list').setDescription('【管理者】複数天気投稿設定を一覧表示'),
   new SlashCommandBuilder().setName('weather-auto-remove').setDescription('【管理者】天気自動投稿設定を削除')
     .addIntegerOption(o=>o.setName('id').setDescription('設定ID').setRequired(true)),
+  new SlashCommandBuilder().setName('earthquake-auto-add').setDescription('【管理者】地震速報の自動投稿を複数登録')
+    .addStringOption(o=>o.setName('region').setDescription('都道府県・地方・全国').setRequired(true))
+    .addChannelOption(o=>o.setName('channel').setDescription('投稿先').setRequired(true).addChannelTypes(ChannelType.GuildText))
+    .addIntegerOption(o=>o.setName('min_intensity').setDescription('最低震度 1〜7').setMinValue(1).setMaxValue(7)),
+  new SlashCommandBuilder().setName('earthquake-auto-list').setDescription('【管理者】複数地震速報設定を一覧表示'),
+  new SlashCommandBuilder().setName('earthquake-auto-remove').setDescription('【管理者】地震速報の自動投稿設定を削除')
+    .addIntegerOption(o=>o.setName('id').setDescription('設定ID').setRequired(true)),
   new SlashCommandBuilder().setName('ping').setDescription('BOT応答確認'),
   new SlashCommandBuilder().setName('owner-status').setDescription('BOTオーナー判定を確認'),
   new SlashCommandBuilder().setName('bot-restart').setDescription('【BOTオーナー専用】BOTを安全に再起動'),
@@ -111,10 +118,14 @@ export const commandData = [
   new SlashCommandBuilder().setName('role-panel').setDescription('【管理者】このチャンネル専用のボタン式ロールパネルを設置')
     .addStringOption(o=>o.setName('title').setDescription('パネルタイトル').setRequired(false))
     .addStringOption(o=>o.setName('description').setDescription('説明文').setRequired(false)),
-  new SlashCommandBuilder().setName('role-add').setDescription('【管理者】チャンネル専用ロールパネルにロールを追加')
-    .addStringOption(o=>o.setName('label').setDescription('ボタン名（例: A / ゲーム通知）').setRequired(true))
-    .addRoleOption(o=>o.setName('role').setDescription('付与するロール').setRequired(true))
-    .addStringOption(o=>o.setName('mode').setDescription('ロールの取得方法').addChoices({name:'即時付与',value:'instant'},{name:'管理者承認',value:'approval'}))
+  new SlashCommandBuilder().setName('role-add').setDescription('【管理者】ロールを最大5個まとめて追加・パネルを自動表示')
+    .addRoleOption(o=>o.setName('role').setDescription('追加するロール1').setRequired(true))
+    .addRoleOption(o=>o.setName('role2').setDescription('追加するロール2'))
+    .addRoleOption(o=>o.setName('role3').setDescription('追加するロール3'))
+    .addRoleOption(o=>o.setName('role4').setDescription('追加するロール4'))
+    .addRoleOption(o=>o.setName('role5').setDescription('追加するロール5'))
+    .addStringOption(o=>o.setName('label').setDescription('ロール1のボタン名（省略時はロール名）'))
+    .addStringOption(o=>o.setName('mode').setDescription('取得方法（全ロール共通）').addChoices({name:'即時付与',value:'instant'},{name:'管理者承認',value:'approval'}))
     .addChannelOption(o=>o.setName('approval_channel').setDescription('承認申請の通知先（承認制のみ）').addChannelTypes(ChannelType.GuildText))
     .addChannelOption(o=>o.setName('channel').setDescription('対象チャンネル（省略時は現在のチャンネル）').addChannelTypes(ChannelType.GuildText)),
   new SlashCommandBuilder().setName('role-list').setDescription('【管理者】チャンネル専用ロール一覧')
@@ -285,17 +296,36 @@ export const commandData = [
     .addIntegerOption(o=>o.setName('id').setDescription('ルールID').setRequired(true))
     .setDefaultMemberPermissions(PermissionFlagsBits.ModerateMembers),
 
-  new SlashCommandBuilder().setName('play').setDescription('直接音声URLをVCキューへ追加')
-    .addStringOption(o=>o.setName('url').setDescription('直接再生可能な音声URL').setRequired(true)),
-  new SlashCommandBuilder().setName('queue').setDescription('音楽キュー'),
+  new SlashCommandBuilder().setName('play').setDescription('曲名またはURLから音楽を再生')
+    .addStringOption(o=>o.setName('query').setDescription('曲名 / YouTube等のURL').setRequired(true)),
+  new SlashCommandBuilder().setName('queue').setDescription('現在のVCの音楽キュー'),
   new SlashCommandBuilder().setName('skip').setDescription('現在曲をスキップ'),
-  new SlashCommandBuilder().setName('stop').setDescription('音楽停止'),
+  new SlashCommandBuilder().setName('stop').setDescription('現在のVCの音楽停止'),
   new SlashCommandBuilder().setName('pause').setDescription('音楽を一時停止'),
   new SlashCommandBuilder().setName('resume').setDescription('音楽を再開'),
   new SlashCommandBuilder().setName('nowplaying').setDescription('現在再生中を表示'),
   new SlashCommandBuilder().setName('volume').setDescription('音量を変更')
     .addIntegerOption(o=>o.setName('percent').setDescription('音量 1〜200').setRequired(true).setMinValue(1).setMaxValue(200)),
+  new SlashCommandBuilder().setName('music-stats').setDescription('音楽の再生統計を表示')
+    .addStringOption(o=>o.setName('type').setDescription('表示内容').addChoices({name:'よく聴いているユーザー',value:'users'},{name:'人気曲',value:'tracks'},{name:'全体',value:'all'})),
 
-  new SlashCommandBuilder().setName('video').setDescription('動画URLを投稿')
-    .addStringOption(o=>o.setName('url').setDescription('動画URL').setRequired(true))
+  new SlashCommandBuilder().setName('image').setDescription('画像変換・加工ツール')
+    .addSubcommand(sc=>sc.setName('bg-remove').setDescription('画像の背景をAIで透過してPNGに変換')
+      .addAttachmentOption(o=>o.setName('image').setDescription('背景を透過する画像').setRequired(true)))
+    .addSubcommand(sc=>sc.setName('pdf').setDescription('画像ファイルをPDFに変換')
+      .addAttachmentOption(o=>o.setName('image').setDescription('PDFに変換する画像').setRequired(true)))
+    .addSubcommand(sc=>sc.setName('compress').setDescription('画像を5MB以下に自動圧縮')
+      .addAttachmentOption(o=>o.setName('image').setDescription('5MB以下に圧縮する画像').setRequired(true)))
+    .addSubcommand(sc=>sc.setName('video-compress').setDescription('動画を5MB以下に自動圧縮してMP4に変換')
+      .addAttachmentOption(o=>o.setName('video').setDescription('5MB以下に圧縮する動画').setRequired(true)))
+    .addSubcommand(sc=>sc.setName('enhance').setDescription('画像を高画質化・拡大')
+      .addAttachmentOption(o=>o.setName('image').setDescription('高画質化する画像').setRequired(true))
+      .addIntegerOption(o=>o.setName('scale').setDescription('拡大倍率').setRequired(true).addChoices(
+        {name:'2倍',value:2},{name:'4倍',value:4}
+      ))),
+  new SlashCommandBuilder().setName('download').setDescription('SNS動画の取得・動画URL投稿')
+    .addStringOption(o=>o.setName('url').setDescription('YouTube / X / TikTok / Instagram の投稿URL、または動画URL').setRequired(true))
+    .addStringOption(o=>o.setName('format').setDescription('処理方法').setRequired(true).addChoices(
+      {name:'MP4（動画）',value:'mp4'},{name:'MP3（音声）',value:'mp3'},{name:'URLをそのまま投稿',value:'link'}
+    ))
 ];

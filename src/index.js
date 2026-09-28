@@ -1,22 +1,31 @@
 import {
   Client, GatewayIntentBits, Partials, Events, EmbedBuilder,
   ActionRowBuilder, ButtonBuilder, ButtonStyle, ModalBuilder,
-  TextInputBuilder, TextInputStyle, ChannelType, PermissionFlagsBits, StringSelectMenuBuilder
+  TextInputBuilder, TextInputStyle, ChannelType, PermissionFlagsBits, StringSelectMenuBuilder, ChannelSelectMenuBuilder
 } from 'discord.js';
-import { joinVoiceChannel, createAudioPlayer, createAudioResource, AudioPlayerStatus, StreamType } from '@discordjs/voice';
+import { joinVoiceChannel, createAudioPlayer, createAudioResource, AudioPlayerStatus, StreamType, VoiceConnectionStatus, entersState } from '@discordjs/voice';
 import { config, assertConfig, isBotOwner, isBotOwnerUser } from './config.js';
 import { loadStore, saveStore, guildData } from './db/store.js';
 import { searchRegionChoices, searchPrefectureChoices, PREFECTURES, WEATHER_AREAS, expandWeatherRegion } from './regions.js';
 import path from 'node:path';
+import os from 'node:os';
+import fs from 'node:fs/promises';
+import { randomUUID } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import ffmpegPath from 'ffmpeg-static';
+import youtubedl from 'youtube-dl-exec';
+import play from 'play-dl';
+import fsSync from 'node:fs';
 import Parser from 'rss-parser';
+import sharp from 'sharp';
+import PDFDocument from 'pdfkit';
 
 assertConfig();
 const store = loadStore();
 console.log(`🔐 BOTオーナーID読込: ${config.ownerIds.length}件 / .env: ${config.envPath}`);
 console.log(`💾 データ保存先: ${config.dataDir}`);
-const players = new Map();
+const players = new Map(); // key: guildId:voiceChannelId
+const musicBotClients=[];
 const pendingRoleCreates = new Map();
 process.on('unhandledRejection',e=>console.error('⚠️ unhandledRejection (BOT継続):',e));
 process.on('uncaughtException',e=>console.error('⚠️ uncaughtException (BOT継続):',e));
@@ -29,7 +38,7 @@ const ADMIN_COMMANDS=new Set([
   'social-source-add','social-source-remove','social-list','social-test','latest-add','x-add','x-list','x-edit','x-remove','x-test','rsshub-status','media-add','media-remove',
   'news-source-add','news-source-remove','news-list','news-auto','news-test',
   'weather-auto-add','weather-auto-list','weather-auto-remove','weather-register','weather-admin','weather-channel','weather-channel-remove','weather-list','weather-auto',
-  'earthquake-register','earthquake-list','earthquake-auto',
+  'earthquake-register','earthquake-list','earthquake-auto','earthquake-auto-add','earthquake-auto-list','earthquake-auto-remove',
   'schedule-post','schedule-list','schedule-cancel',
   'moderation-rule','moderation-list','moderation-remove',
   'role-panel','role-add','role-list','role-remove','role-create','role-delete','weather-setup','earthquake-setup'
@@ -63,10 +72,261 @@ function validHttpUrl(value){
   }catch{return false;}
 }
 
+
+const SUPPORTED_DOWNLOAD_HOSTS = new Set([
+  'youtube.com','www.youtube.com','m.youtube.com','youtu.be',
+  'x.com','www.x.com','twitter.com','www.twitter.com',
+  'tiktok.com','www.tiktok.com','vm.tiktok.com','vt.tiktok.com',
+  'instagram.com','www.instagram.com'
+]);
+function supportedDownloadUrl(value){
+  try {
+    const u=new URL(value);
+    return u.protocol==='https:' && SUPPORTED_DOWNLOAD_HOSTS.has(u.hostname.toLowerCase());
+  } catch { return false; }
+}
+function safeMediaName(value){
+  return String(value||'media').replace(/[\\/:*?\"<>|\\x00-\\x1f]/g,'_').replace(/\\s+/g,' ').trim().slice(0,80)||'media';
+}
+function ytDlpPythonCommand(){
+  // Windowsでは `python3` が存在しないことが多いため、OSに応じて切り替える。
+  return process.platform === 'win32' ? 'python' : 'python3';
+}
+function runYtDlp(args,{capture=false}={}){
+  return new Promise((resolve,reject)=>{
+    const command=ytDlpPythonCommand();
+    const child=spawn(command,['-m','yt_dlp',...args],{
+      windowsHide:true,
+      stdio:capture?['ignore','pipe','pipe']:['ignore','ignore','pipe']
+    });
+    let stdout=''; let stderr='';
+    if(child.stdout)child.stdout.on('data',d=>stdout+=d.toString());
+    if(child.stderr)child.stderr.on('data',d=>stderr+=d.toString());
+    child.on('error',err=>reject(new Error(`${command} を起動できません: ${err.message}`)));
+    child.on('close',code=>{
+      if(code===0)return resolve(stdout);
+      reject(new Error((stderr||stdout||`yt-dlp exited with code ${code}`).trim().slice(-1800)));
+    });
+  });
+}
+async function downloadSocialMedia(url,format){
+  const dir=await fs.mkdtemp(path.join(os.tmpdir(),'discord-media-'));
+  const id=randomUUID();
+  const output=path.join(dir,`${id}.%(ext)s`);
+  const maxSize=process.env.DOWNLOAD_MAX_SIZE||'24M';
+  try {
+    const jsonText=await runYtDlp(['--dump-single-json','--no-playlist','--skip-download','--no-warnings',url],{capture:true});
+    let info={};
+    try{info=JSON.parse(jsonText);}catch{}
+    const title=safeMediaName(info?.title||'media');
+    const common=['--no-playlist','--no-warnings','--restrict-filenames','-o',output,'--ffmpeg-location',ffmpegPath,'--max-filesize',maxSize];
+    if(format==='mp3'){
+      await runYtDlp([...common,'-x','--audio-format','mp3','--audio-quality','0','-f','bestaudio/best',url]);
+    }else{
+      await runYtDlp([...common,'-f','bv*+ba/b','--merge-output-format','mp4','--recode-video','mp4',url]);
+    }
+    const files=await fs.readdir(dir);
+    const wanted=files.find(x=>x.startsWith(id+'.') && x.toLowerCase().endsWith('.'+format));
+    if(!wanted)throw new Error(`${format.toUpperCase()}ファイルを作成できませんでした。`);
+    const filePath=path.join(dir,wanted);
+    const stat=await fs.stat(filePath);
+    return {dir,filePath,fileName:`${title}.${format}`,size:stat.size};
+  }catch(error){
+    await fs.rm(dir,{recursive:true,force:true}).catch(()=>{});
+    throw error;
+  }
+}
+
+const IMAGE_TYPES = new Set(['image/jpeg','image/png','image/webp','image/gif','image/avif']);
+function validImageAttachment(att){
+  return Boolean(att && (IMAGE_TYPES.has(String(att.contentType||'').toLowerCase()) || /\.(jpe?g|png|webp|gif|avif)$/i.test(att.name||'')));
+}
+async function fetchAttachmentBuffer(att,maxMb=20){
+  if(!validImageAttachment(att))throw new Error('JPG / PNG / WebP / GIF / AVIF の画像を指定してください。');
+  if(att.size && att.size>maxMb*1024*1024)throw new Error(`画像サイズは${maxMb}MB以下にしてください。`);
+  const r=await fetch(att.url);
+  if(!r.ok)throw new Error(`画像を取得できませんでした (${r.status})`);
+  const b=Buffer.from(await r.arrayBuffer());
+  if(b.length>maxMb*1024*1024)throw new Error(`画像サイズは${maxMb}MB以下にしてください。`);
+  return b;
+}
+const VIDEO_TYPES = new Set(['video/mp4','video/quicktime','video/webm','video/x-matroska','video/avi','video/x-msvideo']);
+function validVideoAttachment(att){
+  return Boolean(att && (VIDEO_TYPES.has(String(att.contentType||'').toLowerCase()) || /\.(mp4|mov|webm|mkv|avi|m4v)$/i.test(att.name||'')));
+}
+async function fetchVideoAttachment(att,maxMb=100){
+  if(!validVideoAttachment(att))throw new Error('MP4 / MOV / WebM / MKV / AVI / M4V の動画を指定してください。');
+  if(att.size && att.size>maxMb*1024*1024)throw new Error(`入力動画は${maxMb}MB以下にしてください。`);
+  const r=await fetch(att.url); if(!r.ok)throw new Error(`動画を取得できませんでした (${r.status})`);
+  const b=Buffer.from(await r.arrayBuffer());
+  if(b.length>maxMb*1024*1024)throw new Error(`入力動画は${maxMb}MB以下にしてください。`);
+  return b;
+}
+function runFfmpeg(args){
+  return new Promise((resolve,reject)=>{
+    const c=spawn(ffmpegPath,args,{windowsHide:true,stdio:['ignore','ignore','pipe']}); let err='';
+    c.stderr.on('data',d=>err+=d.toString());
+    c.on('error',reject); c.on('close',code=>code===0?resolve(err):reject(new Error(err.slice(-1800)||`FFmpeg exited with code ${code}`)));
+  });
+}
+async function videoDurationSeconds(input){
+  return new Promise((resolve,reject)=>{
+    const c=spawn(ffmpegPath,['-hide_banner','-i',input],{windowsHide:true,stdio:['ignore','ignore','pipe']}); let err='';
+    c.stderr.on('data',d=>err+=d.toString());
+    c.on('error',reject); c.on('close',()=>{const m=err.match(/Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)/); if(!m)return reject(new Error('動画の再生時間を取得できませんでした。')); resolve(+m[1]*3600 + +m[2]*60 + +m[3]);});
+  });
+}
+async function compressVideoTo5Mb(buffer,dir){
+  const limit=5*1024*1024, target=Math.floor(limit*0.96); const input=path.join(dir,'input_video'); await fs.writeFile(input,buffer);
+  if(buffer.length<=limit){
+    const out=path.join(dir,'compressed.mp4');
+    await runFfmpeg(['-y','-i',input,'-map','0:v:0','-map','0:a?','-c:v','libx264','-preset','medium','-crf','20','-c:a','aac','-b:a','96k','-movflags','+faststart',out]);
+    const st=await fs.stat(out); if(st.size<=limit)return {path:out,size:st.size};
+  }
+  const duration=await videoDurationSeconds(input); if(!duration||duration<=0)throw new Error('動画の長さを取得できませんでした。');
+  if(duration>60*30)throw new Error('5MB圧縮は30分以内の動画に対応しています。長い動画は5MBでは画質が極端に低下します。');
+  let audioK=duration>600?48:64;
+  let totalK=Math.floor((target*8/1000)/duration);
+  let videoK=Math.max(80,totalK-audioK-16);
+  let scale='-2:1080';
+  if(videoK<900)scale='-2:720'; if(videoK<450)scale='-2:480'; if(videoK<220)scale='-2:360';
+  for(let attempt=0;attempt<4;attempt++){
+    const out=path.join(dir,`compressed_${attempt}.mp4`);
+    await runFfmpeg(['-y','-i',input,'-map','0:v:0','-map','0:a?','-vf',`scale=${scale}:force_original_aspect_ratio=decrease`,'-c:v','libx264','-preset','medium','-b:v',`${videoK}k`,'-maxrate',`${videoK}k`,'-bufsize',`${Math.max(videoK*2,160)}k`,'-c:a','aac','-b:a',`${audioK}k`,'-movflags','+faststart',out]);
+    const st=await fs.stat(out); if(st.size<=limit)return {path:out,size:st.size};
+    videoK=Math.max(60,Math.floor(videoK*0.82)); if(attempt===1)scale='-2:480'; if(attempt===2)scale='-2:360';
+  }
+  throw new Error('この動画は5MB以下まで圧縮できませんでした。動画を短くして再度お試しください。');
+}
+
+async function makeTempImageDir(){return fs.mkdtemp(path.join(os.tmpdir(),'discord-image-'));}
+async function imageToPdf(buffer,outPath){
+  const normalized=await sharp(buffer,{animated:false}).rotate().jpeg({quality:95}).toBuffer();
+  const meta=await sharp(normalized).metadata();
+  const w=meta.width||595,h=meta.height||842;
+  const portrait=h>=w;
+  const page=portrait?[595.28,841.89]:[841.89,595.28];
+  await new Promise((resolve,reject)=>{
+    const doc=new PDFDocument({autoFirstPage:false,margin:0});
+    const chunks=[];doc.on('data',c=>chunks.push(c));doc.on('error',reject);
+    doc.on('end',()=>fs.writeFile(outPath,Buffer.concat(chunks)).then(resolve,reject));
+    doc.addPage({size:page,margin:0});
+    doc.image(normalized,0,0,{fit:page,align:'center',valign:'center'});doc.end();
+  });
+}
+async function enhanceImage(buffer,outPath,scale){
+  const img=sharp(buffer,{animated:false}).rotate();const meta=await img.metadata();
+  const width=Math.min((meta.width||1)*scale,12000),height=Math.min((meta.height||1)*scale,12000);
+  await img.resize({width,height,fit:'fill',kernel:sharp.kernel.lanczos3}).sharpen({sigma:1}).png({compressionLevel:6}).toFile(outPath);
+}
+async function compressImageTo5Mb(buffer,outPath){
+  const limit=5*1024*1024;
+  if(buffer.length<=limit){
+    await fs.writeFile(outPath,buffer);
+    return {unchanged:true,size:buffer.length};
+  }
+  const base=sharp(buffer,{animated:false}).rotate().flatten({background:'#ffffff'});
+  const meta=await base.metadata();
+  let width=meta.width||1920;
+  let quality=92;
+  let scale=1;
+  let best=null;
+  for(let attempt=0;attempt<30;attempt++){
+    const targetWidth=Math.max(320,Math.round(width*scale));
+    const candidate=await sharp(buffer,{animated:false}).rotate().flatten({background:'#ffffff'})
+      .resize({width:targetWidth,withoutEnlargement:true,kernel:sharp.kernel.lanczos3})
+      .jpeg({quality,mozjpeg:true,chromaSubsampling:'4:2:0'})
+      .toBuffer();
+    if(candidate.length<=limit){best=candidate;break;}
+    if(quality>55) quality-=7;
+    else {scale*=0.88;quality=82;}
+  }
+  if(!best)throw new Error('5MB以下まで圧縮できませんでした。元画像の解像度を下げて再度お試しください。');
+  await fs.writeFile(outPath,best);
+  return {unchanged:false,size:best.length};
+}
+async function removeImageBackground(buffer,outPath){
+  const {removeBackground}=await import('@imgly/background-removal-node');
+  const input=new Blob([buffer],{type:'image/png'});
+  const result=await removeBackground(input,{output:{format:'image/png',quality:1}});
+  await fs.writeFile(outPath,Buffer.from(await result.arrayBuffer()));
+}
+async function sendImageResult(interaction,work,label){
+  await interaction.deferReply({ephemeral:true});let dir=null;
+  try{
+    dir=await makeTempImageDir();const result=await work(dir);const st=await fs.stat(result.path);
+    const maxBytes=Number(process.env.DISCORD_UPLOAD_MAX_MB||10)*1024*1024;
+    if(st.size>maxBytes)return interaction.editReply(`❌ 処理は完了しましたが、出力ファイルが ${(st.size/1024/1024).toFixed(1)}MB ありDiscordへの添付上限設定を超えています。`);
+    return interaction.editReply({content:`✅ ${label} 完了${result.message?`\n${result.message}`:''}`,files:[{attachment:result.path,name:result.name}]});
+  }catch(e){console.error(label,e);return interaction.editReply(`❌ ${label}に失敗しました。\n${String(e.message||e).slice(0,900)}`);}
+  finally{if(dir)setTimeout(()=>fs.rm(dir,{recursive:true,force:true}).catch(()=>{}),30_000);}
+}
+
+function musicSessionKey(guildId,voiceChannelId){return `${guildId}:${voiceChannelId}`;}
+function sessionForInteraction(interaction){
+  const vcId=interaction.member?.voice?.channelId;
+  return vcId?players.get(musicSessionKey(interaction.guildId,vcId)):null;
+}
+function fmtDuration(sec){sec=Math.max(0,Number(sec)||0);const h=Math.floor(sec/3600),m=Math.floor((sec%3600)/60),s=Math.floor(sec%60);return h?`${h}時間${m}分`:(m?`${m}分${s}秒`:`${s}秒`);}
+async function resolveMusicTrack(input){
+  // ANMusicBOT方式: 検索/URL判定はplay-dl、実際の音声URLは再生直前にyt-dlpで取得する。
+  if(/^https?:\/\//i.test(input)){
+    const type=await play.yt_validate(input).catch(()=>false);
+    if(type==='video'){
+      const info=await play.video_info(input);
+      const v=info.video_details;
+      return {title:v.title||input,url:v.url||input,duration:Number(v.durationInSec)||0,id:String(v.id||v.url||input)};
+    }
+    // YouTube以外など、play-dlが判定できないURLもyt-dlpへ渡せるよう保持する。
+    return {title:input,url:input,duration:0,id:input};
+  }
+  const rows=await play.search(input,{limit:1,source:{youtube:'video'}});
+  const v=rows?.[0];
+  if(!v)throw new Error('曲が見つかりませんでした。');
+  return {title:v.title||input,url:v.url,duration:Number(v.durationInSec)||0,id:String(v.id||v.url)};
+}
+async function freshMusicStreamUrl(pageUrl){
+  const cookie=process.env.YOUTUBE_COOKIE||'cookies.txt';
+  const opts={getUrl:true,format:'bestaudio/best',noPlaylist:true,noWarnings:true};
+  if(fsSync.existsSync(cookie))opts.cookies=cookie;
+  const stream=await youtubedl(pageUrl,opts);
+  const u=String(stream).trim().split(/\r?\n/).find(x=>/^https?:\/\//.test(x));
+  if(!u)throw new Error('音声ストリームURLを取得できませんでした。');
+  return u;
+}
+
+function musicStats(guildId){
+  const g=guildData(store,guildId);g.musicStats??={users:{},tracks:{},totalPlays:0};return g.musicStats;
+}
+function recordTrackStart(guildId,track){
+  const st=musicStats(guildId);st.totalPlays=(st.totalPlays||0)+1;
+  const t=st.tracks[track.id]??={title:track.title,url:track.url,plays:0,seconds:0};t.plays++;t.title=track.title;t.url=track.url;saveStore(store);
+}
+async function chooseMusicClient(guildId){
+  const all=[client,...musicBotClients].filter(c=>c?.isReady?.() && c.guilds.cache.has(guildId));
+  const busyIds=new Set([...players.values()].filter(x=>x.guildId===guildId).map(x=>x.client.user.id));
+  return all.find(c=>!busyIds.has(c.user.id))||null;
+}
+async function createMusicSession(interaction,vc){
+  const key=musicSessionKey(interaction.guildId,vc.id);let existing=players.get(key);if(existing)return existing;
+  const botClient=await chooseMusicClient(interaction.guildId);
+  if(!botClient)throw new Error('このサーバーで利用できる音楽BOTがありません。4同時再生には MUSIC_BOT_TOKEN_2〜4 の追加BOTが必要です。');
+  const bg=botClient.guilds.cache.get(interaction.guildId);const bvc=bg?.channels.cache.get(vc.id)||await bg?.channels.fetch(vc.id).catch(()=>null);
+  if(!bvc)throw new Error('音楽BOTからボイスチャンネルを取得できません。追加BOTを同じサーバーへ招待してください。');
+  const connection=joinVoiceChannel({channelId:vc.id,guildId:interaction.guildId,adapterCreator:bg.voiceAdapterCreator,selfDeaf:true,group:`music-${botClient.user.id}`});
+  await entersState(connection,VoiceConnectionStatus.Ready,20000);
+  const player=createAudioPlayer();connection.subscribe(player);
+  const s={key,guildId:interaction.guildId,voiceChannelId:vc.id,client:botClient,connection,player,queue:[],playing:false,current:null,volume:100,ffmpeg:null,startedAt:null};
+  player.on(AudioPlayerStatus.Idle,()=>{try{s.ffmpeg?.kill();}catch{};if(s.current&&s.startedAt){const st=musicStats(s.guildId);const t=st.tracks[s.current.id];if(t)t.seconds=(t.seconds||0)+Math.max(0,Math.floor((Date.now()-s.startedAt)/1000));saveStore(store);}s.ffmpeg=null;s.playing=false;s.current=null;s.startedAt=null;playNext(key).catch(console.error);});
+  players.set(key,s);return s;
+}
+
 function createFfmpegAudio(url){
   if(!validHttpUrl(url))throw new Error('再生URLが正しくありません。');
   const proc=spawn(ffmpegPath,[
-    '-hide_banner','-loglevel','error','-i',url,
+    '-hide_banner','-loglevel','warning',
+    '-reconnect','1','-reconnect_streamed','1','-reconnect_delay_max','5',
+    '-i',url,
     '-f','s16le','-ar','48000','-ac','2','pipe:1'
   ],{stdio:['ignore','pipe','pipe']});
   proc.stderr?.on('data',d=>console.error(`ffmpeg: ${String(d).trim()}`));
@@ -96,6 +356,53 @@ function buildChannelRolePanel(channelId,cfg,valid,page=0){
     ));
   }
   return {embeds:[embed],components:rows};
+}
+
+// 自動販売機 管理UI
+function shopManageEmbed(shop){
+  const products=(shop.products||[]);
+  const active=products.filter(p=>p.active!==false);
+  const orders=Object.values(store.orders||{}).filter(o=>Number(o.shopId)===Number(shop.id));
+  return new EmbedBuilder()
+    .setTitle(`自販機設定 - ${shop.name}`)
+    .setDescription([
+      `**リンク受取チャンネル**\n${shop.orderChannelId?`<#${shop.orderChannelId}>`:'未設定'}`,
+      `**実績チャンネル**\n${shop.salesChannelId?`<#${shop.salesChannelId}>`:'未設定'}`,
+      `**購入者ロール**\n${shop.managerRoleId?`<@&${shop.managerRoleId}>`:'未設定'}`,
+      `**販売数表示**\n${shop.showSalesCount?'ON':'OFF'}`,
+      `**商品数**\n${active.length}`,
+      `**購入履歴/統計**\n${orders.length}件`
+    ].join('\n'));
+}
+function shopManageRows(shop){
+  return [
+    new ActionRowBuilder().addComponents(
+      new ButtonBuilder().setCustomId(`shopui:productadd:${shop.id}`).setLabel('商品追加').setStyle(ButtonStyle.Primary),
+      new ButtonBuilder().setCustomId(`shopui:stock:${shop.id}`).setLabel('在庫確認').setStyle(ButtonStyle.Success),
+      new ButtonBuilder().setCustomId(`shopui:products:${shop.id}`).setLabel('商品一覧/編集').setStyle(ButtonStyle.Primary)
+    ),
+    new ActionRowBuilder().addComponents(
+      new ButtonBuilder().setCustomId(`shopui:orderchannel:${shop.id}`).setLabel('リンク受取チャンネル設定').setStyle(ButtonStyle.Primary),
+      new ButtonBuilder().setCustomId(`shopui:saleschannel:${shop.id}`).setLabel('実績チャンネル設定').setStyle(ButtonStyle.Primary)
+    ),
+    new ActionRowBuilder().addComponents(
+      new ButtonBuilder().setCustomId(`shopui:salestoggle:${shop.id}`).setLabel(`販売数表示:${shop.showSalesCount?'ON':'OFF'}`).setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder().setCustomId(`shopui:stats:${shop.id}`).setLabel('購入履歴/統計').setStyle(ButtonStyle.Primary),
+      new ButtonBuilder().setCustomId(`shopui:display:${shop.id}`).setLabel('自動販売機表示').setStyle(ButtonStyle.Success)
+    )
+  ];
+}
+function buildShopSalesPanel(shop){
+  const products=(shop.products||[]).filter(p=>p.active!==false && p.stock!==0).slice(0,25);
+  if(!products.length)return null;
+  const select=new StringSelectMenuBuilder().setCustomId(`shopselect:${shop.id}`).setPlaceholder('購入する商品を選択してください').addOptions(products.map(p=>({
+    label:p.name.slice(0,100),description:`¥${Number(p.price).toLocaleString()} / 在庫 ${p.stock<0?'∞':p.stock}`.slice(0,100),value:p.id
+  })));
+  const orders=Object.values(store.orders||{}).filter(o=>Number(o.shopId)===Number(shop.id)&&o.status==='completed');
+  const embed=new EmbedBuilder().setTitle(`🛒 ${shop.name}`).setDescription('下のメニューから商品を選択してください。');
+  if(shop.showSalesCount)embed.addFields({name:'販売実績',value:`${orders.length}件`,inline:true});
+  embed.setFooter({text:`販売者: ${shop.ownerId}`});
+  return {embeds:[embed],components:[new ActionRowBuilder().addComponents(select)]};
 }
 
 // Discordクライアント本体
@@ -306,7 +613,7 @@ function newsEmbed(source,item){
   if(image&&validNewsUrl(image))e.setImage(image);
   return e;
 }
-async function fetchNewsFeed(source){return rssParser.parseURL(source.feedUrl);}
+async function fetchNewsFeed(source){return fetchSocialSource(source);}
 
 const SOCIAL_RSS_BRIDGES=(process.env.SOCIAL_RSS_BRIDGE_URLS||process.env.SOCIAL_RSS_BRIDGE_URL||'http://127.0.0.1:1200')
   .split(',').map(x=>x.trim().replace(/\/+$/,'')).filter(Boolean);
@@ -341,6 +648,28 @@ async function resolveYouTubeFeed(profileUrl){
   return `https://www.youtube.com/feeds/videos.xml?channel_id=${match[1]}`;
 }
 
+async function fetchFxTwitterTimeline(username){
+  const url=`https://api.fxtwitter.com/2/profile/${encodeURIComponent(username)}/statuses`;
+  const res=await fetch(url,{headers:{'User-Agent':'NoahXJP-DiscordBot/6.0 (+Discord notification bot)'},signal:AbortSignal.timeout(15000)});
+  if(!res.ok)throw new Error(`FxTwitter HTTP ${res.status}`);
+  const data=await res.json();
+  const rows=data.statuses||data.results||data.tweets||[];
+  if(!Array.isArray(rows))throw new Error('FxTwitterのタイムライン応答を解析できません');
+  return {items:rows.map(x=>({
+    title:`X @${x.author?.screen_name||x.author?.username||username}`,
+    link:`https://fxtwitter.com/${x.author?.screen_name||x.author?.username||username}/status/${x.id}`,
+    guid:String(x.id),id:String(x.id),isoDate:x.created_at,contentSnippet:x.text||'',raw:x
+  }))};
+}
+
+async function fetchSocialSource(source){
+  if(source.platform==='twitter' && String(source.feedUrl||'').startsWith('fxtwitter://')){
+    const username=decodeURIComponent(String(source.feedUrl).slice('fxtwitter://'.length));
+    return fetchFxTwitterTimeline(username);
+  }
+  return rssParser.parseURL(source.feedUrl);
+}
+
 async function resolveSocialFeedAuto(platform,profileUrl){
   if(platform==='youtube'){
     const feedUrl=await resolveYouTubeFeed(profileUrl);
@@ -349,7 +678,12 @@ async function resolveSocialFeedAuto(platform,profileUrl){
   }
   const username=socialUsername(platform,profileUrl);
   if(!username)throw new Error('プロフィールURLからユーザー名を取得できません');
-  const route=platform==='twitter'?`/twitter/user/${encodeURIComponent(username)}`:`/instagram/user/${encodeURIComponent(username)}`;
+  if(platform==='twitter'){
+    const feedUrl=`fxtwitter://${encodeURIComponent(username)}`;
+    await fetchFxTwitterTimeline(username);
+    return {feedUrl,method:'FxTwitter API v2'};
+  }
+  const route=`/instagram/user/${encodeURIComponent(username)}`;
   const errors=[];
   for(const bridge of SOCIAL_RSS_BRIDGES){
     const feedUrl=bridge+route;
@@ -523,6 +857,7 @@ client.on(Events.InteractionCreate, async interaction => {
 
 11. 🎵 **VC音楽**
 /play /queue /pause /resume /skip /stop /nowplaying /volume
+/download（YouTube / X / TikTok / Instagram → MP4 / MP3）
 
 12. 👑 **管理者権限**
 /owner-status /admin-role-set /admin-role-status
@@ -711,18 +1046,15 @@ AI生成機能は搭載していません。`
         if(!hasConfiguredAdminRole(interaction) && !interaction.memberPermissions?.has(PermissionFlagsBits.ManageGuild) && !isBotOwnerUser(interaction.user)){
           return interaction.reply({content:'❌ 管理者のみ使用できます。',ephemeral:true});
         }
-        const shops=Object.values(store.shops).filter(s=>s.guildId===interaction.guildId);
-        const orders=Object.values(store.orders).filter(o=>o.guildId===interaction.guildId);
-        const pending=orders.filter(o=>o.status==='pending');
-        const lines=shops.slice(0,25).map(s=>{
-          const pc=(s.products||[]).length;
-          const oc=orders.filter(o=>Number(o.shopId)===Number(s.id)).length;
-          return `#${s.id} ${s.active===false?'🛑':'✅'} **${s.name}** / owner:<@${s.ownerId}> / 商品:${pc} / 注文:${oc}`;
-        });
-        return interaction.reply({
-          content:`🔒 **自販機 管理者ページ**\n自販機: ${shops.length}件 / 注文: ${orders.length}件 / 承認待ち: ${pending.length}件\n\n${lines.join('\n')||'自販機はありません。'}`,
-          ephemeral:true
-        });
+        const shops=Object.values(store.shops).filter(s=>s.guildId===interaction.guildId && s.active!==false);
+        const embed=new EmbedBuilder().setTitle('自販機管理').setDescription(`**自販機一覧**\n販売メンバー用\n\n現在: **${shops.length}台**`);
+        const row=new ActionRowBuilder().addComponents(
+          new ButtonBuilder().setCustomId('shopui:create').setLabel('自販機作成').setStyle(ButtonStyle.Primary),
+          new ButtonBuilder().setCustomId('shopui:delete').setLabel('自販機削除').setStyle(ButtonStyle.Danger),
+          new ButtonBuilder().setCustomId('shopui:settings').setLabel('自販機設定').setStyle(ButtonStyle.Primary),
+          new ButtonBuilder().setCustomId('shopui:displayselect').setLabel('自販機表示').setStyle(ButtonStyle.Success)
+        );
+        return interaction.reply({embeds:[embed],components:[row],ephemeral:true});
       }
 
       if (n === 'product-add') {
@@ -864,23 +1196,9 @@ AI生成機能は搭載していません。`
         const shop=store.shops[interaction.options.getInteger('shop_id')];
         if(!shop||shop.guildId!==interaction.guildId||shop.active===false)return interaction.reply({content:'❌ 自販機が見つかりません。',ephemeral:true});
         if(!isShopManager(interaction,shop))return interaction.reply({content:'❌ 管理権限がありません。',ephemeral:true});
-
-        const products=(shop.products||[]).filter(p=>p.active!==false && p.stock!==0).slice(0,25);
-        if(!products.length)return interaction.reply({content:'❌ 販売可能な商品がありません。',ephemeral:true});
-
-        const select=new StringSelectMenuBuilder()
-          .setCustomId(`shopselect:${shop.id}`)
-          .setPlaceholder('購入する商品を選択してください')
-          .addOptions(products.map(p=>({
-            label:p.name.slice(0,100),
-            description:`¥${Number(p.price).toLocaleString()} / 在庫 ${p.stock<0?'∞':p.stock}`.slice(0,100),
-            value:p.id
-          })));
-        const embed=new EmbedBuilder()
-          .setTitle(`🛒 ${shop.name}`)
-          .setDescription('下のメニューから商品を選択すると、商品画像・説明・価格を確認して購入できます。')
-          .setFooter({text:`販売者: ${shop.ownerId}`});
-        return interaction.reply({embeds:[embed],components:[new ActionRowBuilder().addComponents(select)]});
+        const panel=buildShopSalesPanel(shop);
+        if(!panel)return interaction.reply({content:'❌ 販売可能な商品がありません。',ephemeral:true});
+        return interaction.reply(panel);
       }
 
       if (n === 'verify-panel') {
@@ -1103,25 +1421,42 @@ AI生成機能は搭載していません。`
         }
         if(!valid.length)return interaction.reply({content:'❌ このチャンネルにはロールがありません。先に `/role-add` をこのチャンネルで実行してください。',ephemeral:true});
         const page=0;
-        return interaction.reply(buildChannelRolePanel(channelId,cfg,valid,page));
+        const msg=await interaction.reply({...buildChannelRolePanel(channelId,cfg,valid,page),fetchReply:true});
+        cfg.panelMessageId=msg.id;saveStore(store);return;
       }
 
       if (n === 'role-add') {
         const g=guildData(store,interaction.guildId); g.rolePanels ??= {};
         const target=interaction.options.getChannel('channel')||interaction.channel;
         const cfg=g.rolePanels[target.id] ??= {title:'チャンネルアクセス権限',description:'',roleOptions:[]};
-        const role=interaction.options.getRole('role',true);
-        const problem=rolePanelProblem(interaction.guild,role);
-        if(problem)return interaction.reply({content:`❌ ${problem}`,ephemeral:true});
-        const label=interaction.options.getString('label',true).slice(0,80);
+        const roles=['role','role2','role3','role4','role5'].map(n=>interaction.options.getRole(n)).filter(Boolean);
         const mode=interaction.options.getString('mode')||'instant';
         const approvalChannel=interaction.options.getChannel('approval_channel');
         const reviewId=approvalChannel?.id||g.verificationReviewChannelId;
         if(mode==='approval'&&!reviewId)return interaction.reply({content:'❌ 承認制ロールには approval_channel を指定するか /verify-settings で通知先を設定してください。',ephemeral:true});
-        cfg.roleOptions=(cfg.roleOptions||[]).filter(x=>x.roleId!==role.id);
-        cfg.roleOptions.push({roleId:role.id,label,mode,approvalChannelId:mode==='approval'?reviewId:null});
+        const added=[];
+        for(let i=0;i<roles.length;i++){
+          const role=roles[i],problem=rolePanelProblem(interaction.guild,role);
+          if(problem)return interaction.reply({content:`❌ ${role.name}: ${problem}`,ephemeral:true});
+          const custom=i===0?interaction.options.getString('label'):null;
+          const label=(custom||role.name).slice(0,80);
+          cfg.roleOptions=(cfg.roleOptions||[]).filter(x=>x.roleId!==role.id);
+          cfg.roleOptions.push({roleId:role.id,label,mode,approvalChannelId:mode==='approval'?reviewId:null});
+          added.push(`${label} → ${role}`);
+        }
+        const valid=[];
+        for(const opt of cfg.roleOptions){
+          const role=await interaction.guild.roles.fetch(opt.roleId).catch(()=>null);
+          if(role&&!rolePanelProblem(interaction.guild,role))valid.push({roleId:role.id,label:(opt.label||role.name).slice(0,80),roleName:role.name,mode:opt.mode||'instant'});
+        }
+        // /role-panel を別途実行しなくても、追加時にパネルを自動作成・更新する。
+        let panelMessage=null;
+        if(cfg.panelMessageId)panelMessage=await target.messages.fetch(cfg.panelMessageId).catch(()=>null);
+        const payload=buildChannelRolePanel(target.id,cfg,valid,0);
+        if(panelMessage)await panelMessage.edit(payload);
+        else { panelMessage=await target.send(payload); cfg.panelMessageId=panelMessage.id; }
         saveStore(store);
-        return interaction.reply({content:`✅ <#${target.id}> 専用パネルに **${label}** → ${role}（${mode==='approval'?'承認制':'即時付与'}）を追加しました。現在 **${cfg.roleOptions.length}件**。\nパネルを更新する場合は、そのチャンネルで \`/role-panel\` を実行してください。`,ephemeral:true});
+        return interaction.reply({content:`✅ <#${target.id}> に **${roles.length}個**のロールを追加し、ロールボタンを自動更新しました。\n${added.join('\n')}`,ephemeral:true});
       }
 
       if (n === 'role-list') {
@@ -1311,7 +1646,7 @@ AI生成機能は搭載していません。`
         await interaction.deferReply({ephemeral:true});
         try{
           const resolved=await resolveSocialFeedAuto('twitter',input);
-          const feed=await rssParser.parseURL(resolved.feedUrl);
+          const feed=platform==='twitter'?await fetchFxTwitterTimeline(socialUsername('twitter',input)):await rssParser.parseURL(resolved.feedUrl);
           g.socialSources??=[];g.socialSeen??={};
           const existing=g.socialSources.find(x=>x.platform==='twitter'&&socialUsername('twitter',x.profileUrl)?.toLowerCase()===username.toLowerCase()&&x.channelId===channel.id);
           if(existing)return interaction.editReply(`ℹ️ 同じアカウントと投稿先は登録済みです（#${existing.id}）。`);
@@ -1319,7 +1654,7 @@ AI生成機能は搭載していません。`
           g.socialSources.push({id,name:`X @${username}`,platform:'twitter',profileUrl:input,feedUrl:resolved.feedUrl,channelId:channel.id,method:resolved.method,enabled:true,createdAt:new Date().toISOString(),lastError:null});
           g.socialSeen[id]=(feed.items||[]).slice(0,50).map(newsItemKey);saveStore(store);
           return interaction.editReply(`✅ X @${username} を登録しました（ID: ${id}）。\n投稿先: ${channel}\n取得方式: ${resolved.method}\n登録前の投稿は通知せず、次の新着から通知します。`);
-        }catch(e){console.error('x-add',e);return interaction.editReply(`❌ Xの取得経路を確認できませんでした。RSSHubの稼働・Xへのアクセスを確認してください。\n${String(e.message||e).slice(0,500)}`);}
+        }catch(e){console.error('x-add',e);return interaction.editReply(`❌ FxTwitterからXの最新投稿を取得できませんでした。Xアカウント名・FxTwitter APIの応答を確認してください。\n${String(e.message||e).slice(0,500)}`);}
       }
       if(n==='x-list'){
         const g=guildData(store,interaction.guildId),sources=(g.socialSources||[]).filter(x=>x.platform==='twitter');
@@ -1344,7 +1679,7 @@ AI生成機能は搭載していません。`
         }
         await interaction.deferReply({ephemeral:true});
         try{
-          const feed=await rssParser.parseURL(source.feedUrl),item=feed.items?.[0];
+          const feed=await fetchSocialSource(source),item=feed.items?.[0];
           if(!item)return interaction.editReply('❌ 最新投稿が取得できませんでした。');
           const ch=await interaction.guild.channels.fetch(source.channelId).catch(()=>null);
           if(!ch?.isTextBased())return interaction.editReply('❌ 投稿先が見つかりません。');
@@ -1361,7 +1696,7 @@ AI生成機能は搭載していません。`
           else { await rssParser.parseURL(input); resolved={feedUrl:input,method:'RSS/Atom'}; name=new URL(input).hostname; }
         }catch(e){return interaction.reply({content:`❌ URLから取得方式を判定できませんでした。\n${String(e.message||e).slice(0,800)}`,ephemeral:true});}
         const id=g.nextSocialSourceId++;
-        const initialFeed=await rssParser.parseURL(resolved.feedUrl);
+        const initialFeed=platform==='twitter'?await fetchFxTwitterTimeline(socialUsername('twitter',input)):await rssParser.parseURL(resolved.feedUrl);
         g.socialSources.push({id,name,platform:platform||'rss',profileUrl:input,feedUrl:resolved.feedUrl,channelId:channel.id,method:resolved.method,active:true});
         g.socialSeen??={};g.socialSeen[id]=(initialFeed.items||[]).slice(0,50).map(newsItemKey);saveStore(store);
         return interaction.reply({content:`✅ 最新情報 #${id} を登録しました。\n取得方式: **${resolved.method}**\n投稿先: ${channel}`,ephemeral:true});
@@ -1381,7 +1716,7 @@ AI生成機能は搭載していません。`
         await interaction.deferReply({ephemeral:true});
         try{
           const resolved=await resolveSocialFeedAuto(platform,profileUrl);
-          const feed=await rssParser.parseURL(resolved.feedUrl);
+          const feed=platform==='twitter'?await fetchFxTwitterTimeline(socialUsername('twitter',profileUrl)):await rssParser.parseURL(resolved.feedUrl);
           const id=g.nextSocialSourceId++;
           const source={id,platform,profileUrl,feedUrl:resolved.feedUrl,method:resolved.method,channelId:parsed.channelId,enabled:true,createdAt:new Date().toISOString(),lastError:null};
           g.socialSources.push(source);
@@ -1415,7 +1750,7 @@ AI生成機能は搭載していません。`
         if(!source)return interaction.reply({content:'❌ SNSソースIDが見つかりません。',ephemeral:true});
         await interaction.deferReply({ephemeral:true});
         try{
-          const feed=await rssParser.parseURL(source.feedUrl),item=feed.items?.[0];
+          const feed=await fetchSocialSource(source),item=feed.items?.[0];
           if(!item)return interaction.editReply('❌ 投稿を取得できません。');
           const ch=interaction.guild.channels.cache.get(source.channelId)||await interaction.guild.channels.fetch(source.channelId).catch(()=>null);
           if(!ch?.isTextBased())return interaction.editReply('❌ 投稿先チャンネルを取得できません。');
@@ -1700,6 +2035,28 @@ AI生成機能は搭載していません。`
         });
       }
 
+      if (n === 'earthquake-auto-add') {
+        const g=guildData(store,interaction.guildId);
+        const region=interaction.options.getString('region',true).trim();
+        const regions=region==='全国'?[]:expandWeatherRegion(region);
+        if(region!=='全国'&&!regions.length)return interaction.reply({content:'❌ 地域名が正しくありません。',ephemeral:true});
+        const channelId=interaction.options.getChannel('channel',true).id;
+        const minIntensity=interaction.options.getInteger('min_intensity')||3;
+        g.earthquakeJobs??=[];
+        const id=Math.max(0,...g.earthquakeJobs.map(x=>x.id||0))+1;
+        g.earthquakeJobs.push({id,region,regions,channelId,minIntensity});saveStore(store);
+        return interaction.reply({content:`✅ 地震速報設定 #${id} を追加: ${region} / <#${channelId}> / 最低震度 ${minIntensity}`,ephemeral:true});
+      }
+      if(n==='earthquake-auto-list'){
+        const jobs=guildData(store,interaction.guildId).earthquakeJobs||[];
+        return interaction.reply({content:jobs.length?jobs.map(j=>`#${j.id} ${j.region||((j.regions||[]).join('、')||'全国')} → <#${j.channelId}> / 最低震度 ${j.minIntensity||3}`).join('\n').slice(0,1900):'登録なし',ephemeral:true});
+      }
+      if(n==='earthquake-auto-remove'){
+        const g=guildData(store,interaction.guildId),id=interaction.options.getInteger('id',true);
+        const before=(g.earthquakeJobs||[]).length;g.earthquakeJobs=(g.earthquakeJobs||[]).filter(j=>j.id!==id);saveStore(store);
+        return interaction.reply({content:before===g.earthquakeJobs.length?'❌ 設定IDが見つかりません。':`✅ 地震速報設定 #${id} を削除しました。`,ephemeral:true});
+      }
+
       if (n === 'earthquake') {
         await interaction.deferReply();return interaction.editReply(earthquakeText(await fetchLatestEarthquake()));
       }
@@ -1755,79 +2112,158 @@ AI生成機能は搭載していません。`
       }
 
       if (n === 'play') {
-        const url=interaction.options.getString('url',true);
-
-        if (/(?:youtube\.com\/watch|youtu\.be\/|youtube\.com\/shorts\/)/i.test(url)) {
-          return interaction.reply(`▶️ YouTube動画
-${url}
-
-※ YouTube URLはDiscord内プレビュー再生です。`);
-        }
-
-        const vc=interaction.member?.voice?.channel;
+        const input=interaction.options.getString('query',true);const vc=interaction.member?.voice?.channel;
         if(!vc)return interaction.reply({content:'❌ 先にボイスチャンネルへ参加してください。',ephemeral:true});
-
-        let s=players.get(interaction.guildId);
-        if(!s){
-          const connection=joinVoiceChannel({channelId:vc.id,guildId:interaction.guildId,adapterCreator:interaction.guild.voiceAdapterCreator});
-          const player=createAudioPlayer();
-          connection.subscribe(player);
-          s={connection,player,queue:[],playing:false,current:null,volume:100,ffmpeg:null};
-          player.on(AudioPlayerStatus.Idle,()=>{try{s.ffmpeg?.kill();}catch{} s.ffmpeg=null;s.playing=false;s.current=null;playNext(interaction.guildId).catch(console.error);});
-          players.set(interaction.guildId,s);
+        await interaction.deferReply();
+        try{
+          const track=await resolveMusicTrack(input);const sess=await createMusicSession(interaction,vc);
+          sess.queue.push({...track,requesterId:interaction.user.id});
+          const controls=new ActionRowBuilder().addComponents(
+            new ButtonBuilder().setCustomId('music:pause').setLabel('⏸ 一時停止').setStyle(ButtonStyle.Secondary),
+            new ButtonBuilder().setCustomId('music:resume').setLabel('▶ 再開').setStyle(ButtonStyle.Success),
+            new ButtonBuilder().setCustomId('music:skip').setLabel('⏭ スキップ').setStyle(ButtonStyle.Primary),
+            new ButtonBuilder().setCustomId('music:stop').setLabel('⏹ 停止').setStyle(ButtonStyle.Danger),
+            new ButtonBuilder().setCustomId('music:leave').setLabel('🚪 退出').setStyle(ButtonStyle.Danger));
+          await interaction.editReply({embeds:[new EmbedBuilder().setTitle('🎵 Music Player').setDescription(`**${track.title}**\n${track.url}\n\nVC: <#${vc.id}> / 担当: <@${sess.client.user.id}>`)],components:[controls]});
+          if(!sess.playing)playNext(sess.key).catch(console.error);
+        }catch(e){await interaction.editReply(`❌ 再生準備に失敗しました。\n${String(e.message||e).slice(0,1000)}`);}return;
+      }
+      if (n === 'queue') {const s=sessionForInteraction(interaction);const lines=[];if(s?.current)lines.push(`▶️ **${s.current.title}**`);if(s?.queue?.length)lines.push(...s.queue.map((x,k)=>`${k+1}. ${x.title}`));return interaction.reply(lines.join('\n')||'このVCのキューは空です。');}
+      if (n === 'skip') {const s=sessionForInteraction(interaction);if(!s)return interaction.reply({content:'このVCでは再生していません。',ephemeral:true});s.player.stop(true);return interaction.reply('⏭️ スキップしました。');}
+      if (n === 'stop') {const s=sessionForInteraction(interaction);if(s){s.queue.length=0;try{s.ffmpeg?.kill();}catch{}s.player.stop(true);s.connection.destroy();players.delete(s.key);}return interaction.reply('⏹️ このVCの再生を停止しました。');}
+      if (n === 'pause') {const s=sessionForInteraction(interaction);if(!s)return interaction.reply({content:'このVCでは再生していません。',ephemeral:true});s.player.pause();return interaction.reply('⏸️ 一時停止しました。');}
+      if (n === 'resume') {const s=sessionForInteraction(interaction);if(!s)return interaction.reply({content:'このVCでは再生していません。',ephemeral:true});s.player.unpause();return interaction.reply('▶️ 再開しました。');}
+      if (n === 'nowplaying') {const s=sessionForInteraction(interaction);return interaction.reply(s?.current?`🎵 **${s.current.title}**\n${s.current.url}\n担当: <@${s.client.user.id}>`:'このVCでは現在再生していません。');}
+      if (n === 'volume') {const s=sessionForInteraction(interaction);if(!s)return interaction.reply({content:'このVCでは再生していません。',ephemeral:true});const v=interaction.options.getInteger('percent',true);s.volume=v;s.player.state.resource?.volume?.setVolume(v/100);return interaction.reply(`🔊 音量を ${v}% に変更しました。`);}
+      if (n === 'music-stats') {
+        const st=musicStats(interaction.guildId),type=interaction.options.getString('type')||'all';const parts=[];
+        if(type==='all'||type==='users'){const users=Object.entries(st.users||{}).sort((a,b)=>(b[1].seconds||0)-(a[1].seconds||0)).slice(0,10);parts.push(`👥 **よく聴いているユーザー**\n${users.length?users.map(([id,u],i)=>`${i+1}. <@${id}> — ${fmtDuration(u.seconds)}`).join('\n'):'まだ統計がありません。'}`);}
+        if(type==='all'||type==='tracks'){const tracks=Object.values(st.tracks||{}).sort((a,b)=>(b.plays||0)-(a.plays||0)).slice(0,10);parts.push(`🎶 **人気曲**\n${tracks.length?tracks.map((t,i)=>`${i+1}. ${t.title} — ${t.plays}回`).join('\n'):'まだ統計がありません。'}`);}
+        return interaction.reply({embeds:[new EmbedBuilder().setTitle('📊 Music Statistics').setDescription(parts.join('\n\n')).setFooter({text:`総再生開始回数: ${st.totalPlays||0}`})]});
+      }
+      if (n === 'image') {
+        const sub=interaction.options.getSubcommand(true);
+        if (sub === 'compress') {
+          const att=interaction.options.getAttachment('image',true);
+          return sendImageResult(interaction,async dir=>{
+            const b=await fetchAttachmentBuffer(att,50);
+            const originalExt=(path.extname(att.name||'')||'.jpg').toLowerCase();
+            const alreadySmall=b.length<=5*1024*1024;
+            const out=path.join(dir,alreadySmall?`compressed${originalExt}`:'compressed.jpg');
+            const info=await compressImageTo5Mb(b,out);
+            const mb=(info.size/1024/1024).toFixed(2);
+            return {path:out,name:`${path.parse(att.name||'image').name}_5MB${alreadySmall?originalExt:'.jpg'}`,message:info.unchanged?`元画像はすでに5MB以下です（${mb}MB）`:`${mb}MBまで圧縮しました`};
+          },'画像5MB圧縮');
         }
+        if (sub === 'video-compress') {
+          const att=interaction.options.getAttachment('video',true);
+          await interaction.deferReply({ephemeral:true});
+          const dir=await makeTempImageDir();
+          try{
+            const b=await fetchVideoAttachment(att,100);
+            const result=await compressVideoTo5Mb(b,dir);
+            const mb=(result.size/1024/1024).toFixed(2);
+            await interaction.editReply({content:`🎬 動画を ${mb}MB に圧縮しました。`,files:[{attachment:result.path,name:`${path.parse(att.name||'video').name}_5MB.mp4`}]});
+          }catch(e){await interaction.editReply(`❌ 動画圧縮に失敗しました。\n${String(e?.message||e).slice(0,1500)}`);}
+          finally{await fs.rm(dir,{recursive:true,force:true}).catch(()=>{});}
+          return;
+        }
+        if (sub === 'bg-remove') {
+          const att=interaction.options.getAttachment('image',true);
+          return sendImageResult(interaction,async dir=>{const b=await fetchAttachmentBuffer(att);const out=path.join(dir,'background_removed.png');await removeImageBackground(b,out);return {path:out,name:`${path.parse(att.name||'image').name}_transparent.png`};},'背景透過');
+        }
+        if (sub === 'pdf') {
+          const att=interaction.options.getAttachment('image',true);
+          return sendImageResult(interaction,async dir=>{const b=await fetchAttachmentBuffer(att);const out=path.join(dir,'converted.pdf');await imageToPdf(b,out);return {path:out,name:`${path.parse(att.name||'image').name}.pdf`};},'PDF変換');
+        }
+        if (sub === 'enhance') {
+          const att=interaction.options.getAttachment('image',true),scale=interaction.options.getInteger('scale',true);
+          return sendImageResult(interaction,async dir=>{const b=await fetchAttachmentBuffer(att);const out=path.join(dir,'enhanced.png');await enhanceImage(b,out,scale);return {path:out,name:`${path.parse(att.name||'image').name}_${scale}x.png`};},`画像高画質化（${scale}倍）`);
+        }
+      }
+      if (n === 'download') {
+        const url=interaction.options.getString('url',true);
+        const format=interaction.options.getString('format',true);
+        if(format==='link') return interaction.reply(`🎬 ${url}`);
+        if(!supportedDownloadUrl(url)){
+          return interaction.reply({content:'❌ 対応URLは YouTube / X / TikTok / Instagram の投稿URLです。',ephemeral:true});
+        }
+        await interaction.deferReply({ephemeral:true});
+        let result=null;
+        try{
+          result=await downloadSocialMedia(url,format);
+          const maxBytes=Number(process.env.DISCORD_UPLOAD_MAX_MB||10)*1024*1024;
+          if(result.size>maxBytes){
+            return interaction.editReply(`❌ 変換は完了しましたが、ファイルが ${(result.size/1024/1024).toFixed(1)}MB ありDiscordへの添付上限設定（${process.env.DISCORD_UPLOAD_MAX_MB||10}MB）を超えています。\n.env の DISCORD_UPLOAD_MAX_MB は、実際に利用できるDiscord添付上限に合わせて変更できます。`);
+          }
+          return interaction.editReply({content:`✅ ${format.toUpperCase()} 変換完了`,files:[{attachment:result.filePath,name:result.fileName}]});
+        }catch(e){
+          console.error('download command failed:',e);
+          return interaction.editReply(`❌ 取得・変換に失敗しました。\n非公開/年齢制限/ログイン必須投稿、サービス側の仕様変更などでは取得できない場合があります。\n${String(e.message||e).slice(0,700)}`);
+        }finally{
+          if(result?.dir)setTimeout(()=>fs.rm(result.dir,{recursive:true,force:true}).catch(()=>{}),30_000);
+        }
+      }
+    }
 
-        s.queue.push(url);
-
-        const controls=new ActionRowBuilder().addComponents(
-          new ButtonBuilder().setCustomId('music:pause').setLabel('⏸ 一時停止').setStyle(ButtonStyle.Secondary),
-          new ButtonBuilder().setCustomId('music:resume').setLabel('▶ 再開').setStyle(ButtonStyle.Success),
-          new ButtonBuilder().setCustomId('music:skip').setLabel('⏭ スキップ').setStyle(ButtonStyle.Primary),
-          new ButtonBuilder().setCustomId('music:stop').setLabel('⏹ 停止').setStyle(ButtonStyle.Danger)
-        );
-
-        await interaction.reply({
-          embeds:[new EmbedBuilder().setTitle('🎵 Music Player').setDescription(`キューに追加しました。
-${url}`)],
-          components:[controls]
-        });
-        if(!s.playing)playNext(interaction.guildId).catch(console.error);
-        return;
+    // 自動販売機 管理パネル操作
+    if(interaction.isButton() && interaction.customId.startsWith('shopui:')){
+      const [,action,shopId]=interaction.customId.split(':');
+      if(action==='create'){
+        const modal=new ModalBuilder().setCustomId('shopuiCreateModal').setTitle('自動販売機作成');
+        modal.addComponents(new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('name').setLabel('自動販売機名').setStyle(TextInputStyle.Short).setRequired(true).setMaxLength(80)));
+        return interaction.showModal(modal);
       }
-      if (n === 'queue') {
-        const s=players.get(interaction.guildId);const lines=[];if(s?.current)lines.push(`▶️ ${s.current}`);if(s?.queue?.length)lines.push(...s.queue.map((x,k)=>`${k+1}. ${x}`));
-        return interaction.reply(lines.join('\n')||'キューは空です。');
+      const shops=Object.values(store.shops).filter(x=>x.guildId===interaction.guildId&&x.active!==false);
+      if(action==='settings'||action==='delete'||action==='displayselect'){
+        if(!shops.length)return interaction.reply({content:'自動販売機がありません。',ephemeral:true});
+        const select=new StringSelectMenuBuilder().setCustomId(`shopuiSelect:${action}`).setPlaceholder(action==='settings'?'設定する自販機を選択してください':action==='delete'?'削除する自販機を選択してください':'表示する自販機を選択してください').addOptions(shops.slice(0,25).map(x=>({label:x.name.slice(0,100),description:`自販機 #${x.id}`,value:String(x.id)})));
+        return interaction.reply({content:'対象を選択してください：',components:[new ActionRowBuilder().addComponents(select)],ephemeral:true});
       }
-      if (n === 'skip') { players.get(interaction.guildId)?.player.stop(true); return interaction.reply('⏭️ スキップしました。'); }
-      if (n === 'stop') {
-        const s=players.get(interaction.guildId);if(s){s.queue.length=0;try{s.ffmpeg?.kill();}catch{}s.player.stop(true);s.connection.destroy();players.delete(interaction.guildId);}
-        return interaction.reply('⏹️ 停止しました。');
+      const shop=store.shops[shopId];
+      if(!shop||shop.guildId!==interaction.guildId||!isShopManager(interaction,shop))return interaction.reply({content:'❌ 自販機が見つからないか、管理権限がありません。',ephemeral:true});
+      if(action==='display'){
+        const picker=new ChannelSelectMenuBuilder().setCustomId(`shopuiChannel:display:${shop.id}`).setPlaceholder('自販機を表示するチャンネル').addChannelTypes(ChannelType.GuildText);
+        return interaction.reply({content:`**${shop.name}** の表示先を選択してください。`,components:[new ActionRowBuilder().addComponents(picker)],ephemeral:true});
       }
-      if (n === 'pause') {
-        const s=players.get(interaction.guildId);
-        if(!s)return interaction.reply({content:'再生中の音楽はありません。',ephemeral:true});
-        s.player.pause();
-        return interaction.reply('⏸️ 一時停止しました。');
+      if(action==='orderchannel'||action==='saleschannel'){
+        const picker=new ChannelSelectMenuBuilder().setCustomId(`shopuiChannel:${action}:${shop.id}`).setPlaceholder('チャンネルを選択').addChannelTypes(ChannelType.GuildText);
+        return interaction.reply({content:'設定するチャンネルを選択してください。',components:[new ActionRowBuilder().addComponents(picker)],ephemeral:true});
       }
-      if (n === 'resume') {
-        const s=players.get(interaction.guildId);
-        if(!s)return interaction.reply({content:'再生中の音楽はありません。',ephemeral:true});
-        s.player.unpause();
-        return interaction.reply('▶️ 再開しました。');
+      if(action==='salestoggle'){shop.showSalesCount=!shop.showSalesCount;saveStore(store);return interaction.update({embeds:[shopManageEmbed(shop)],components:shopManageRows(shop)});}
+      if(action==='stock'||action==='products'){
+        const ps=shop.products||[];const lines=ps.map(p=>`${p.active===false?'🛑':'✅'} **${p.name}** / ID:\`${p.id}\` / ¥${Number(p.price).toLocaleString()} / 在庫:${p.stock<0?'∞':p.stock}`);
+        return interaction.reply({content:lines.join('\n')||'商品はありません。',ephemeral:true});
       }
-      if (n === 'nowplaying') {
-        const s=players.get(interaction.guildId);
-        return interaction.reply(s?.current ? `🎵 現在再生中\n${s.current}` : '現在再生中の音楽はありません。');
+      if(action==='stats'){
+        const os=Object.values(store.orders||{}).filter(o=>Number(o.shopId)===Number(shop.id));const completed=os.filter(o=>o.status==='completed');const total=completed.reduce((a,o)=>a+Number(o.total||0),0);
+        return interaction.reply({content:`📊 **${shop.name} 統計**\n注文: **${os.length}件**\n完了: **${completed.length}件**\n完了売上: **¥${total.toLocaleString()}**`,ephemeral:true});
       }
-      if (n === 'volume') {
-        const s=players.get(interaction.guildId);
-        if(!s)return interaction.reply({content:'再生中の音楽はありません。',ephemeral:true});
-        const v=interaction.options.getInteger('percent',true);
-        s.volume=v;
-        s.player.state.resource?.volume?.setVolume(v/100);
-        return interaction.reply(`🔊 音量を ${v}% に変更しました。`);
+      if(action==='productadd')return interaction.reply({content:`商品追加は \`/product-add shop_id:${shop.id}\` から登録できます。ZIP・URL・画像・購入後ロール等も設定できます。`,ephemeral:true});
+    }
+    if(interaction.isStringSelectMenu() && interaction.customId.startsWith('shopuiSelect:')){
+      const action=interaction.customId.split(':')[1],shop=store.shops[interaction.values[0]];
+      if(!shop||shop.guildId!==interaction.guildId||!isShopManager(interaction,shop))return interaction.update({content:'❌ 自販機が見つからないか、管理権限がありません。',components:[]});
+      if(action==='settings')return interaction.update({content:'',embeds:[shopManageEmbed(shop)],components:shopManageRows(shop)});
+      if(action==='displayselect'){
+        const picker=new ChannelSelectMenuBuilder().setCustomId(`shopuiChannel:display:${shop.id}`).setPlaceholder('自販機を表示するチャンネル').addChannelTypes(ChannelType.GuildText);
+        return interaction.update({content:`**${shop.name}** の表示先を選択してください。`,embeds:[],components:[new ActionRowBuilder().addComponents(picker)]});
       }
-      if (n === 'video') return interaction.reply(`🎬 ${interaction.options.getString('url',true)}`);
+      if(action==='delete'){shop.active=false;saveStore(store);return interaction.update({content:`🛑 自販機 #${shop.id}「${shop.name}」を停止しました。`,components:[]});}
+    }
+    if(interaction.isChannelSelectMenu() && interaction.customId.startsWith('shopuiChannel:')){
+      const [,action,shopId]=interaction.customId.split(':'),shop=store.shops[shopId];
+      if(!shop||shop.guildId!==interaction.guildId||!isShopManager(interaction,shop))return interaction.update({content:'❌ 自販機が見つからないか、管理権限がありません。',components:[]});
+      const channelId=interaction.values[0],ch=await interaction.guild.channels.fetch(channelId).catch(()=>null);
+      if(!ch?.isTextBased())return interaction.update({content:'❌ テキストチャンネルを選択してください。',components:[]});
+      if(action==='display'){
+        const panel=buildShopSalesPanel(shop);if(!panel)return interaction.update({content:'❌ 販売可能な商品がありません。先に商品を追加してください。',components:[]});
+        const msg=await ch.send(panel);shop.panelChannelId=ch.id;shop.panelMessageId=msg.id;saveStore(store);
+        return interaction.update({content:`✅ **${shop.name}** を ${ch} に表示しました。`,components:[]});
+      }
+      if(action==='orderchannel')shop.orderChannelId=ch.id;
+      if(action==='saleschannel')shop.salesChannelId=ch.id;
+      saveStore(store);return interaction.update({content:`✅ **${shop.name}** のチャンネル設定を ${ch} に変更しました。`,components:[]});
     }
 
     if (interaction.isButton() && interaction.customId==='support_help') return interaction.reply({content:'🆘 サポートサーバー: https://discord.gg/KGhYc6cWmq',ephemeral:true});
@@ -2125,14 +2561,19 @@ ${url}`)],
         }
       }
       if (kind === 'music') {
-        const s=players.get(interaction.guildId);
+        const s=sessionForInteraction(interaction);
+        if(a==='leave'){
+          if(!s)return interaction.reply({content:'❌ このBOTと同じVCに参加してください。',ephemeral:true});
+          s.queue.length=0;try{s.ffmpeg?.kill('SIGKILL');}catch{};try{s.player.stop(true);}catch{};try{s.connection.destroy();}catch{};players.delete(s.key);
+          return interaction.reply({content:'🚪 ボイスチャンネルから退出しました。',ephemeral:true});
+        }
         if(a==='stop'){
           if(s){
             s.queue.length=0;
             try{s.ffmpeg?.kill();}catch{}
             s.player.stop(true);
             try{s.connection.destroy();}catch{}
-            players.delete(interaction.guildId);
+            players.delete(s.key);
           }
           return interaction.reply({content:'⏹️ 再生を停止しました。',ephemeral:true});
         }
@@ -2293,6 +2734,14 @@ ${url}`)],
       }
     }
 
+    if(interaction.isModalSubmit() && interaction.customId==='shopuiCreateModal'){
+      const name=interaction.fields.getTextInputValue('name').trim();
+      const id=store.nextShopId++;
+      const shop={id,guildId:interaction.guildId,ownerId:interaction.user.id,name,managerRoleId:null,orderChannelId:interaction.channelId,salesChannelId:null,historyChannelId:interaction.channelId,active:true,products:[],showSalesCount:false};
+      store.shops[id]=shop;saveStore(store);
+      return interaction.reply({content:`✅ 自動販売機 #${id}「${name}」を作成しました。\n\`/shop-admin\` → **自販機設定** から設定できます。`,ephemeral:true});
+    }
+
     if (interaction.isModalSubmit() && interaction.customId.startsWith('buyModal:')) {
       const [,shopId,productId]=interaction.customId.split(':'),shop=store.shops[shopId],p=shop?.products?.find(x=>x.id===productId);
       if(!shop||!p)return interaction.reply({content:'❌ 商品が見つかりません。',ephemeral:true});
@@ -2365,39 +2814,52 @@ ${url}`)],
   }
 });
 
-async function playNext(gid){
-  const s=players.get(gid);
-  if(!s||s.playing||!s.queue.length)return;
 
-  const url=s.queue.shift();
-  try{
-    const {proc,resource}=createFfmpegAudio(url);
-    s.current=url;
-    s.playing=true;
-    s.ffmpeg=proc;
-    resource.volume?.setVolume((s.volume??100)/100);
-
-    proc.on('error',e=>{
-      console.error('ffmpeg process error',e);
-      s.playing=false;
-      s.current=null;
-      s.ffmpeg=null;
-      try{s.player.stop(true);}catch{}
-    });
-
-    proc.on('close',code=>{
-      if(code && code!==0)console.error(`ffmpeg exited: ${code}`);
-    });
-
-    s.player.play(resource);
-  }catch(e){
-    s.current=null;
-    s.playing=false;
-    s.ffmpeg=null;
-    console.error('playNext',e);
-    return playNext(gid);
+async function autoLeaveEmptyMusicSessions(guildId){
+  const guild=client.guilds.cache.get(guildId);if(!guild)return;
+  for(const s of [...players.values()].filter(x=>x.guildId===guildId)){
+    const ch=guild.channels.cache.get(s.voiceChannelId)||await guild.channels.fetch(s.voiceChannelId).catch(()=>null);
+    const humans=ch?.members?.filter(m=>!m.user.bot).size??0;
+    if(!ch||humans===0){
+      console.log(`👋 VCが無人のため音楽BOT自動退出: ${s.voiceChannelId}`);
+      s.queue.length=0;try{s.ffmpeg?.kill('SIGKILL');}catch{};try{s.player.stop(true);}catch{};try{s.connection.destroy();}catch{};players.delete(s.key);
+    }
   }
 }
+client.on(Events.VoiceStateUpdate,(oldState,newState)=>{
+  if([...players.values()].some(s=>s.guildId===oldState.guild.id))setTimeout(()=>autoLeaveEmptyMusicSessions(oldState.guild.id).catch(console.error),1000);
+});
+setInterval(()=>{for(const gid of new Set([...players.values()].map(s=>s.guildId)))autoLeaveEmptyMusicSessions(gid).catch(console.error);},15000);
+
+async function playNext(key){
+  const s=players.get(key);
+  if(!s||s.playing||!s.queue.length)return;
+  const track=s.queue.shift();
+  try{
+    const streamUrl=await freshMusicStreamUrl(track.url);
+    const {proc,resource}=createFfmpegAudio(streamUrl);
+    s.current=track;s.playing=true;s.ffmpeg=proc;s.startedAt=Date.now();
+    resource.volume?.setVolume((s.volume??100)/100);recordTrackStart(s.guildId,track);
+    proc.on('error',e=>{console.error('ffmpeg process error',e);s.playing=false;s.current=null;s.ffmpeg=null;try{s.player.stop(true);}catch{}});
+    proc.on('close',code=>{if(code&&code!==0)console.error(`ffmpeg exited: ${code}`);});
+    s.player.play(resource);
+  }catch(e){s.current=null;s.playing=false;s.ffmpeg=null;console.error('playNext',e);return playNext(key);}
+}
+
+// 再生中VCの実リスナー滞在時間を60秒ごとに統計へ加算
+setInterval(()=>{
+  let changed=false;
+  for(const s of players.values()){
+    if(!s.playing)continue;
+    const guild=client.guilds.cache.get(s.guildId);const vc=guild?.channels.cache.get(s.voiceChannelId);if(!vc?.members)continue;
+    const st=musicStats(s.guildId);
+    for(const member of vc.members.values()){
+      if(member.user.bot)continue;
+      const u=st.users[member.id]??={name:member.user.username,seconds:0};u.seconds+=60;u.name=member.user.username;changed=true;
+    }
+  }
+  if(changed)saveStore(store);
+},60000);
 
 setInterval(async()=>{
   const now=Date.now();let changed=false;
@@ -2448,7 +2910,7 @@ setInterval(async()=>{
     for(const source of g.socialSources){
       if(source.enabled===false||source.active===false)continue;
       try{
-        const feed=await rssParser.parseURL(source.feedUrl);
+        const feed=await fetchSocialSource(source);
         source.lastError=null;
         const items=(feed.items||[]).slice(0,20),seen=new Set(g.socialSeen[source.id]||[]);
         const fresh=items.filter(i=>!seen.has(newsItemKey(i))).reverse();
@@ -2509,15 +2971,21 @@ async function runEarthquakeWatcher(){
     const areaText=(item.points||[]).map(p=>p.pref||p.addr||'').join(' ');
     for(const guild of client.guilds.cache.values()){
       const g=guildData(store,guild.id);
-      if(!g.earthquakeAutoEnabled)continue;
-      if(!g.earthquakeChannelId){console.warn(`⚠️ 地震自動通知 ${guild.id}: 投稿先未設定`);continue;}
-      if(maxN<Number(g.minIntensity||3))continue;
-      const earthquakeTargets=g.earthquakeRegions||[];
-      if(earthquakeTargets.length>0 && !earthquakeTargets.some(r=>areaText.includes(r.replace(/[都道府県]$/,''))))continue;
-      const ch=guild.channels.cache.get(g.earthquakeChannelId)||await guild.channels.fetch(g.earthquakeChannelId).catch(()=>null);
-      if(!ch?.isTextBased()){console.warn(`⚠️ 地震自動通知 ${guild.id}: 投稿先を取得できません`);continue;}
-      await ch.send(earthquakeText(item));
-      console.log(`🚨 地震速報を投稿: ${guild.name} / ${ch.name}`);
+      const jobs=[...(g.earthquakeJobs||[])];
+      // 従来の1件設定も互換維持。複数設定がある場合は両方を処理する。
+      if(g.earthquakeAutoEnabled&&g.earthquakeChannelId)jobs.push({id:'legacy',regions:g.earthquakeRegions||[],channelId:g.earthquakeChannelId,minIntensity:g.minIntensity||3});
+      const sentChannels=new Set();
+      for(const job of jobs){
+        if(maxN<Number(job.minIntensity||3))continue;
+        const targets=job.regions||[];
+        if(targets.length>0&&!targets.some(r=>areaText.includes(r.replace(/[都道府県]$/,''))))continue;
+        // 同じイベントを同じチャンネルへ二重送信しない。
+        if(sentChannels.has(job.channelId))continue;
+        const ch=guild.channels.cache.get(job.channelId)||await guild.channels.fetch(job.channelId).catch(()=>null);
+        if(!ch?.isTextBased()){console.warn(`⚠️ 地震自動通知 ${guild.id}: channel ${job.channelId} を取得できません`);continue;}
+        try{await ch.send(earthquakeText(item));sentChannels.add(job.channelId);console.log(`🚨 地震速報を投稿: ${guild.name} / ${ch.name} / 設定#${job.id}`);}
+        catch(err){console.error(`❌ 地震速報投稿失敗 ${guild.id}/#${job.id}`,err);}
+      }
     }
   }catch(e){console.error('❌ earthquake watcher',e);}
   finally{earthquakeWatcherBusy=false;}
@@ -2614,5 +3082,12 @@ client.once(Events.ClientReady,async readyClient=>{
   scheduleLoop('weather',runWeatherWatcher,15000);
 });
 
+
+const extraMusicTokens=[process.env.MUSIC_BOT_TOKEN_2,process.env.MUSIC_BOT_TOKEN_3,process.env.MUSIC_BOT_TOKEN_4].filter(Boolean);
+for(const [i,token] of extraMusicTokens.entries()){
+  const c=new Client({intents:[GatewayIntentBits.Guilds,GatewayIntentBits.GuildVoiceStates]});
+  c.once(Events.ClientReady,()=>console.log(`🎵 追加音楽BOT ${i+2} ログイン: ${c.user.tag}`));
+  c.login(token).catch(e=>console.error(`❌ 追加音楽BOT ${i+2} ログイン失敗`,e));musicBotClients.push(c);
+}
 
 client.login(config.token);

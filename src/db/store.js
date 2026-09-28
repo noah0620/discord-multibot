@@ -77,9 +77,11 @@ export function guildData(store, guildId) {
     weatherAutoEnabled: false,
     weatherAutoTime: '07:00',
     earthquakeAutoEnabled: false,
+    earthquakeJobs: [],
     lastWeatherPostDate: null,
     weatherSetupUpdatedAt: null,
-    earthquakeSetupUpdatedAt: null
+    earthquakeSetupUpdatedAt: null,
+    musicStats: { users: {}, tracks: {}, totalPlays: 0 }
   };
   const g = store.guilds[guildId];
   g.joinTitle ??= '📥 メンバー参加';
@@ -89,6 +91,7 @@ export function guildData(store, guildId) {
   g.weatherAutoTime ??= '07:00';
   g.weatherAutoEnabled ??= false;
   g.earthquakeAutoEnabled ??= false;
+  g.earthquakeJobs ??= [];
   g.minIntensity ??= 3;
   g.socialSources ??= [];
   g.nextSocialSourceId ??= 1;
@@ -103,6 +106,8 @@ export function guildData(store, guildId) {
   g.earthquakeRegions ??= [];
   g.weatherSetupUpdatedAt ??= null;
   g.earthquakeSetupUpdatedAt ??= null;
+  g.musicStats ??= { users: {}, tracks: {}, totalPlays: 0 };
+  g.musicStats.users ??= {}; g.musicStats.tracks ??= {}; g.musicStats.totalPlays ??= 0;
   g.autoReplies ??= {};
   g.adminRoleId ??= null;
   g.adminRoleIds ??= [];
