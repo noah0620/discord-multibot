@@ -2330,70 +2330,43 @@ client.on(Events.InteractionCreate, async interaction => {
       }
       if (n === 'weather-auto') {
         const g=guildData(store,interaction.guildId);
+        const sub=interaction.options.getSubcommand();
+        if(sub==='add'){
+          const region=interaction.options.getString('region',true).trim();
+          const regions=expandWeatherRegion(region);
+          if(!regions.length)return interaction.reply({content:'❌ 地域名が正しくありません。',ephemeral:true});
+          const time=interaction.options.getString('time',true).trim();
+          if(!/^(?:[01]\d|2[0-3]):[0-5]\d$/.test(time))return interaction.reply({content:'❌ 時刻は HH:MM で指定してください。',ephemeral:true});
+          g.weatherJobs??=[];
+          const id=Math.max(0,...g.weatherJobs.map(x=>x.id||0))+1;
+          const channelId=interaction.options.getChannel('channel',true).id;
+          g.weatherJobs.push({id,regions,channelId,time,lastSent:null}); saveStore(store);
+          return interaction.reply({content:`✅ 天気設定 #${id} を追加しました。\n地域: **${region}**\n投稿先: <#${channelId}>\n時刻: **${time} JST**`,ephemeral:true});
+        }
+        if(sub==='list'){
+          const jobs=g.weatherJobs||[];
+          return interaction.reply({content:jobs.length?`🌤️ **天気 自動投稿設定（${jobs.length}件）**\n`+jobs.map(j=>`#${j.id} ${j.regions.join('、')} → <#${j.channelId}> / ${j.time} JST`).join('\n').slice(0,1850):'登録なし',ephemeral:true});
+        }
+        if(sub==='remove'){
+          const id=interaction.options.getInteger('id',true),before=(g.weatherJobs||[]).length;
+          g.weatherJobs=(g.weatherJobs||[]).filter(j=>j.id!==id); saveStore(store);
+          return interaction.reply({content:before===g.weatherJobs.length?'❌ 設定IDが見つかりません。':`✅ 天気設定 #${id} を削除しました。`,ephemeral:true});
+        }
         const enabled=interaction.options.getBoolean('enabled',true);
         const raw=interaction.options.getString('time');
         const channel=interaction.options.getChannel('channel');
-
         if(raw){
           const value=raw.trim();
-          if(!/^(?:[01]\d|2[0-3]):[0-5]\d$/.test(value)){
-            return interaction.reply({content:'❌ 時刻は `07:00` や `18:30` のように24時間表記で入力してください。',ephemeral:true});
-          }
-          g.weatherAutoTime=value;
-          g.lastWeatherPostDate=null;
+          if(!/^(?:[01]\d|2[0-3]):[0-5]\d$/.test(value))return interaction.reply({content:'❌ 時刻は `07:00` や `18:30` のように24時間表記で入力してください。',ephemeral:true});
+          g.weatherAutoTime=value; g.lastWeatherPostDate=null;
         }
-
         if(channel)g.weatherChannelId=channel.id;
-
         const registeredForAuto=g.weatherRegions||[];
         const missingRoute=registeredForAuto.filter(pref=>!(g.weatherChannelRoutes||{})[pref] && !g.weatherChannelId);
-        if(enabled && missingRoute.length){
-          return interaction.reply({
-            content:`❌ 投稿先が未設定の地域があります: ${missingRoute.join('、')}\n`
-              + '`/weather-channel` で地域ごとの投稿先を設定するか、`/weather-auto channel:` で共通投稿先を設定してください。',
-            ephemeral:true
-          });
-        }
-
-        if(enabled && !(g.weatherRegions||[]).length){
-          return interaction.reply({
-            content:'❌ 自動投稿をONにする前に天気地域を1つ以上登録してください。\n例: `/weather-register action:追加 region:関東地方`',
-            ephemeral:true
-          });
-        }
-
-        g.weatherAutoEnabled=enabled;
-        saveStore(store);
-        return interaction.reply({
-          content:`✅ **自動天気設定を保存しました**\n`
-            + `自動投稿: **${g.weatherAutoEnabled?'ON':'OFF'}**\n`
-            + `投稿時刻: **${g.weatherAutoTime||'07:00'}**（日本時間）\n`
-            + `共通投稿先: ${g.weatherChannelId?`<#${g.weatherChannelId}>`:'未設定（地域別設定を使用可能）'}\n`
-            + `登録地域: **${(g.weatherRegions||[]).length}/47都道府県**`,
-          ephemeral:true
-        });
-      }
-
-      if (n === 'earthquake-auto-add') {
-        const g=guildData(store,interaction.guildId);
-        const region=interaction.options.getString('region',true).trim();
-        const regions=region==='全国'?[]:expandWeatherRegion(region);
-        if(region!=='全国'&&!regions.length)return interaction.reply({content:'❌ 地域名が正しくありません。',ephemeral:true});
-        const channelId=interaction.options.getChannel('channel',true).id;
-        const minIntensity=interaction.options.getInteger('min_intensity')||3;
-        g.earthquakeJobs??=[];
-        const id=Math.max(0,...g.earthquakeJobs.map(x=>x.id||0))+1;
-        g.earthquakeJobs.push({id,region,regions,channelId,minIntensity});saveStore(store);
-        return interaction.reply({content:`✅ 地震速報設定 #${id} を追加: ${region} / <#${channelId}> / 最低震度 ${minIntensity}`,ephemeral:true});
-      }
-      if(n==='earthquake-auto-list'){
-        const jobs=guildData(store,interaction.guildId).earthquakeJobs||[];
-        return interaction.reply({content:jobs.length?jobs.map(j=>`#${j.id} ${j.region||((j.regions||[]).join('、')||'全国')} → <#${j.channelId}> / 最低震度 ${j.minIntensity||3}`).join('\n').slice(0,1900):'登録なし',ephemeral:true});
-      }
-      if(n==='earthquake-auto-remove'){
-        const g=guildData(store,interaction.guildId),id=interaction.options.getInteger('id',true);
-        const before=(g.earthquakeJobs||[]).length;g.earthquakeJobs=(g.earthquakeJobs||[]).filter(j=>j.id!==id);saveStore(store);
-        return interaction.reply({content:before===g.earthquakeJobs.length?'❌ 設定IDが見つかりません。':`✅ 地震速報設定 #${id} を削除しました。`,ephemeral:true});
+        if(enabled && missingRoute.length)return interaction.reply({content:`❌ 投稿先が未設定の地域があります: ${missingRoute.join('、')}`,ephemeral:true});
+        if(enabled && !registeredForAuto.length)return interaction.reply({content:'❌ 自動投稿をONにする前に天気地域を1つ以上登録してください。',ephemeral:true});
+        g.weatherAutoEnabled=enabled; saveStore(store);
+        return interaction.reply({content:`✅ 共通天気自動投稿: **${enabled?'ON':'OFF'}**\n時刻: **${g.weatherAutoTime||'07:00'} JST**\n投稿先: ${g.weatherChannelId?`<#${g.weatherChannelId}>`:'未設定'}`,ephemeral:true});
       }
 
       if (n === 'earthquake') {

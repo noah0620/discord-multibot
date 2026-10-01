@@ -3,13 +3,6 @@ import { SlashCommandBuilder, PermissionFlagsBits, ChannelType } from 'discord.j
 export const commandData = [
   new SlashCommandBuilder().setName('help').setDescription('BOTの機能一覧を表示'),
   new SlashCommandBuilder().setName('supportchannel').setDescription('サポートサーバーの招待リンクを表示'),
-  new SlashCommandBuilder().setName('weather-auto-add').setDescription('【管理者】天気の自動投稿を複数登録')
-    .addStringOption(o=>o.setName('region').setDescription('都道府県・地方・全国').setRequired(true))
-    .addChannelOption(o=>o.setName('channel').setDescription('投稿先').setRequired(true).addChannelTypes(ChannelType.GuildText))
-    .addStringOption(o=>o.setName('time').setDescription('日本時間 HH:MM').setRequired(true)),
-  new SlashCommandBuilder().setName('weather-auto-list').setDescription('【管理者】複数天気投稿設定を一覧表示'),
-  new SlashCommandBuilder().setName('weather-auto-remove').setDescription('【管理者】天気自動投稿設定を削除')
-    .addIntegerOption(o=>o.setName('id').setDescription('設定ID').setRequired(true)),
   new SlashCommandBuilder().setName('earthquake-auto-add').setDescription('【管理者】地震速報の自動投稿を複数登録')
     .addStringOption(o=>o.setName('region').setDescription('都道府県・地方・全国').setRequired(true))
     .addChannelOption(o=>o.setName('channel').setDescription('投稿先').setRequired(true).addChannelTypes(ChannelType.GuildText))
@@ -265,10 +258,18 @@ export const commandData = [
     .addStringOption(o=>o.setName('region').setDescription('都道府県・地方・全国').setAutocomplete(true).setRequired(true)),
 
   new SlashCommandBuilder().setName('weather-list').setDescription('【管理者】登録済み天気地域を表示'),
-  new SlashCommandBuilder().setName('weather-auto').setDescription('【管理者】自動天気のON/OFF・時刻・投稿先を設定')
-    .addBooleanOption(o=>o.setName('enabled').setDescription('ON/OFF').setRequired(true))
-    .addStringOption(o=>o.setName('time').setDescription('毎日の投稿時刻 例: 07:00 / 18:30'))
-    .addChannelOption(o=>o.setName('channel').setDescription('自動天気の投稿先').addChannelTypes(ChannelType.GuildText)),
+  new SlashCommandBuilder().setName('weather-auto').setDescription('【管理者】天気の自動投稿を複数チャンネル設定')
+    .addSubcommand(sc=>sc.setName('setup').setDescription('従来の共通自動投稿を設定')
+      .addBooleanOption(o=>o.setName('enabled').setDescription('ON/OFF').setRequired(true))
+      .addStringOption(o=>o.setName('time').setDescription('毎日の投稿時刻 例: 07:00 / 18:30'))
+      .addChannelOption(o=>o.setName('channel').setDescription('共通投稿先').addChannelTypes(ChannelType.GuildText)))
+    .addSubcommand(sc=>sc.setName('add').setDescription('地域・投稿先・時刻を追加（複数登録可）')
+      .addStringOption(o=>o.setName('region').setDescription('都道府県・地方・全国').setRequired(true))
+      .addChannelOption(o=>o.setName('channel').setDescription('投稿先').setRequired(true).addChannelTypes(ChannelType.GuildText))
+      .addStringOption(o=>o.setName('time').setDescription('日本時間 HH:MM').setRequired(true)))
+    .addSubcommand(sc=>sc.setName('list').setDescription('複数チャンネルの自動投稿設定を一覧表示'))
+    .addSubcommand(sc=>sc.setName('remove').setDescription('複数自動投稿設定を削除')
+      .addIntegerOption(o=>o.setName('id').setDescription('設定ID').setRequired(true))),
 
   new SlashCommandBuilder().setName('earthquake').setDescription('最新地震情報'),
   new SlashCommandBuilder().setName('earthquake-register').setDescription('地震通知地域を追加')
